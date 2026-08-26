@@ -1585,7 +1585,7 @@ export function connectionBudget(budget, controls = {}) {
     const span = (Date.parse(to.at) - Date.parse(from.at)) / 86400000;
     // An interval that spans a change in evaluator count attributes one configuration's cost to
     // another. That is precisely how the overrun was mis-projected, so such intervals are skipped.
-    if (span <= 0.2 || to.used <= from.used || from.containers !== to.containers) continue;
+    if (span <= 0.2 || to.used < from.used || from.containers !== to.containers) continue;
     burnPerDay = (to.used - from.used) / span;
     measuredOver = { from: from.at, to: to.at, containers: to.containers, days: Number(span.toFixed(2)) };
     if (to.containers > 0) costPerContainer = (burnPerDay * days) / to.containers;
@@ -1604,7 +1604,8 @@ export function connectionBudget(budget, controls = {}) {
   // it is the same error that caused the overrun. Cap the recommendation at twice what has actually
   // been measured and require a fresh reading before going further.
   const naive = costPerContainer === null || remainingDays === 0 ? null
-    : Math.max(0, Math.floor((headroom * days / remainingDays) / costPerContainer));
+    : (costPerContainer <= 0 ? Number.MAX_SAFE_INTEGER
+      : Math.max(0, Math.floor((headroom * days / remainingDays) / costPerContainer)));
   const measuredCount = measuredOver ? measuredOver.containers : null;
   const affordable = naive === null ? null : (measuredCount ? Math.min(naive, measuredCount * 2) : naive);
   let severity = BUDGET_SEVERITY.ok; const warnings = [];

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "s022",
+  "title": "Restore eight evaluators before the false-silence threshold",
+  "recommendedDate": "2026-08-26",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "deploy": [
+    {
+      "service": "demo-orders",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-orders",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-storefront",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-checkout",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-catalog",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-notifications",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-shipping",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    }
+  ],
+  "targeting": [],
+  "notes": [
+    "demo-catalog-enrichment was roughly seventeen hours from crossing the seven-day no-evaluations threshold, with demo-tax-calculation-v2, demo-pricing-engine-v2 and demo-checkout-address-validation a day behind it. Their code is deployed and calling them; only the evaluators were missing. Crossing would have manufactured exactly the false silence this talk warns about.",
+    "Eight evaluators, up from four. The measured burn has been zero for seven consecutive days at four, with the metered figure unchanged at 3.817 of 5, so the earlier caution is no longer supported by the data.",
+    "The likely mechanism, worth stating plainly: LaunchDarkly appears to sample concurrent connections rather than count every one. Each evaluator holds a connection for under a second per five-minute cycle, so at small counts a sample almost never catches one, while at thirty-two it caught them constantly. Same architecture, wildly different bill.",
+    "Chosen for coverage: demo-checkout restores demo-tax-calculation-v2 and demo-checkout-address-validation, demo-catalog restores demo-catalog-enrichment and demo-pricing-engine-v2, demo-notifications restores demo-sms-notifications, demo-shipping adds a second caller for demo-express-returns.",
+    "Re-measure after a full day at eight before going further. The affordability cap remains twice the measured configuration."
+  ]
+}

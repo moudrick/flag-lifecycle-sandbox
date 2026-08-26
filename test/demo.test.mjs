@@ -685,8 +685,13 @@ test('the compiled scenario carries a budget verdict for the deployment it decla
   assert.ok(model.budget, 'the compiler must attach a budget verdict when budget.json is present');
   assert.ok(model.deployments.length <= Math.max(1, model.budget.affordableContainers), `scenario declares ${model.deployments.length}, affords ${model.budget.affordableContainers}`);
   assert.equal(model.budgetWarning, undefined, 'no warning expected while the declared deployment fits the measured budget');
-  const greedy = { ...scenarioFiles, budget: { ...scenarioFiles.budget, limit: 0.5 } };
-  assert.match(compileScenario(greedy).budgetWarning, /CONNECTION BUDGET/, 'exceeding the budget must warn');
+  // A measured cost of zero means nothing is affordable-limited, so force the warning with a
+  // budget whose measured interval has real cost rather than by shrinking the limit.
+  const costly = { ...scenarioFiles, budget: { schemaVersion: 1, limit: 5, observations: [
+    { at: '2026-08-17T00:00:00Z', used: 0.5, containers: 2 },
+    { at: '2026-08-20T00:00:00Z', used: 4.5, containers: 2 }
+  ], tiers: [] } };
+  assert.match(compileScenario(costly, { now: '2026-08-20T00:00:00Z' }).budgetWarning, /CONNECTION BUDGET/, 'a scenario declaring more evaluators than measured cost affords must warn');
 });
 test('the tracked scenario compiles and satisfies the topology and consumer contract', () => {
   const model = compileScenario(scenarioFiles);
@@ -727,9 +732,9 @@ test('the compiler is forward-only and refuses contract violations', () => {
   assert.throws(() => compileScenario(rerun), /re-introduces/);
   const backward = base(); backward.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-08-01', cadence: 'three-day' });
   assert.throws(() => compileScenario(backward), /forward-only/);
-  const daily = base(); daily.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-08-25', cadence: 'daily' });
+  const daily = base(); daily.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: after(daily), cadence: 'daily' });
   assert.throws(() => compileScenario(daily), /daily cadence outside the permitted/);
-  const allowedDaily = base(); allowedDaily.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-08-25', cadence: 'daily', transition: 'staging-canary' });
+  const allowedDaily = base(); allowedDaily.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: after(allowedDaily), cadence: 'daily', transition: 'staging-canary' });
   assert.doesNotThrow(() => compileScenario(allowedDaily), 'a named short transition may use daily cadence');
   const inWindow = base(); inWindow.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-09-11', cadence: 'daily' });
   assert.doesNotThrow(() => compileScenario(inWindow), 'the screenshot window permits daily cadence');
@@ -837,7 +842,7 @@ test('targeting instructions express rollout as fallthrough false plus one rule 
 test('the compiler enforces cluster membership and least-populated-first rollout order', () => {
   const withTargeting = (targeting) => {
     const base = JSON.parse(JSON.stringify(scenarioFiles));
-    base.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-08-25', cadence: 'three-day', targeting });
+    base.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: new Date(Date.parse(`${base.steps.at(-1).recommendedDate}T00:00:00.000Z`) + 86400000).toISOString().slice(0, 10), cadence: 'three-day', targeting });
     return base;
   };
   assert.throws(() => compileScenario(withTargeting([{ flag: 'demo-nope', environment: 'production', state: 'on' }])), /unknown flag/);

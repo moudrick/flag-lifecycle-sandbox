@@ -8,6 +8,30 @@ x-rotated-logs: &rotated-logs
     max-size: 10m
     max-file: "3"
 
+x-catalog: &catalog
+  build: ./repos/demo-catalog
+  image: clean-room-demo/demo-catalog:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
+x-checkout: &checkout
+  build: ./repos/demo-checkout
+  image: clean-room-demo/demo-checkout:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
+x-notifications: &notifications
+  build: ./repos/demo-notifications
+  image: clean-room-demo/demo-notifications:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
 x-orders: &orders
   build: ./repos/demo-orders
   image: clean-room-demo/demo-orders:local
@@ -24,6 +48,14 @@ x-profile: &profile
   stop_grace_period: 30s
   logging: *rotated-logs
 
+x-shipping: &shipping
+  build: ./repos/demo-shipping
+  image: clean-room-demo/demo-shipping:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
 x-storefront: &storefront
   build: ./repos/demo-storefront
   image: clean-room-demo/demo-storefront:local
@@ -33,6 +65,27 @@ x-storefront: &storefront
   logging: *rotated-logs
 
 services:
+  catalog-production:
+    <<: *catalog
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  checkout-production:
+    <<: *checkout
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  notifications-production:
+    <<: *notifications
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
   orders-production:
     <<: *orders
     environment:
@@ -42,6 +95,13 @@ services:
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
   profile-production:
     <<: *profile
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  shipping-production:
+    <<: *shipping
     environment:
       <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
