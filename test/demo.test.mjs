@@ -1133,3 +1133,19 @@ test('archive gates match the vendor rules the campaign is accumulating evidence
   const criticals = ENVIRONMENTS.filter((environment) => environment.critical).map((environment) => environment.key).sort();
   assert.deepEqual(criticals, ['production', 'staging'], 'archiving is gated on critical environments only');
 });
+
+test('nothing claims an evaluator count from the whole scenario when it means the running one', () => {
+  // This bug has occurred twice: scenario compose generated a runtime for unapplied steps, and
+  // scenario budget recorded a live meter reading against the planned evaluator count rather than
+  // the running one, which corrupts the measured cost per evaluator the tier ladder rests on.
+  // scenario/steps holds applied steps and a plan together, so compiling all of it is only correct
+  // when the question really is about the plan.
+  const cli = fs.readFileSync(new URL('../demo.mjs', import.meta.url), 'utf8');
+  const offenders = [...cli.matchAll(/^.*compileScenario\(scenario\)\.deployments.*$/gm)].map((match) => match[0].trim());
+  assert.deepEqual(offenders, [], 'derive evaluator counts from the applied steps, not from every step on disk');
+  // And the distinction has to be real, or the guard is proving nothing.
+  const planned = compileScenario(scenarioFiles);
+  const running = appliedModel();
+  assert.ok(planned.deployments.length >= running.deployments.length);
+  assert.ok(planned.steps.length > running.steps.length, 'the scenario currently plans further ahead than it has applied');
+});

@@ -222,9 +222,17 @@ try {
         console.log(`${step.id} | ${step.recommendedDate} | ${applied.has(step.id) ? 'applied' : 'pending'} | ${timing}`);
       }
     } else if (sub === 'budget') {
+      // What is RUNNING, never what is planned. A later step may declare more evaluators, and
+      // recording that count against today's meter reading would corrupt the measured cost per
+      // evaluator, which is the only number the whole tier ladder rests on.
+      const runningEvaluatorCount = () => {
+        const ids = readState().appliedSteps.map((item) => item.id).sort();
+        if (!ids.length) throw new Error('No step has been applied, so no evaluator count can be claimed.');
+        return compileScenario({ ...scenario, steps: stepsThrough(scenario.steps, ids.at(-1)) }).deployments.length;
+      };
       const file = 'scenario/budget.json';
       const budget = JSON.parse(fs.readFileSync(file, 'utf8'));
-      const containersNow = Number(argumentAfter('--containers') ?? compileScenario(scenario).deployments.length);
+      const containersNow = Number(argumentAfter('--containers') ?? runningEvaluatorCount());
       let usage = null;
       if (!process.argv.includes('--offline')) {
         try {
@@ -242,13 +250,13 @@ try {
       if (record !== undefined) {
         const used = Number(record);
         if (!Number.isFinite(used) || used < 0) throw new Error('scenario budget --record needs the usage figure shown by the vendor, for example 3.761');
-        const containers = Number(argumentAfter('--containers') ?? compileScenario(scenario).deployments.length);
+        const containers = Number(argumentAfter('--containers') ?? runningEvaluatorCount());
         budget.observations.push({ at: new Date().toISOString(), used, containers, note: argumentAfter('--note') || 'recorded from plan usage' });
         fs.writeFileSync(file, `${JSON.stringify(budget, null, 2)}
 `);
         console.log(`Recorded reading ${used} at ${containers} evaluator(s). Observations are real readings; never replace one with a projection.`);
       }
-      const report = connectionBudget(budget, { containers: Number(argumentAfter('--containers') ?? compileScenario(scenario).deployments.length) });
+      const report = connectionBudget(budget, { containers: Number(argumentAfter('--containers') ?? runningEvaluatorCount()) });
       console.log(`SEVERITY ${report.severity} | used ${report.used} of ${report.limit} | headroom ${report.headroom.toFixed(3)} | ${report.remainingDays} day(s) left this month`);
       if (report.measuredOver) console.log(`Measured over ${report.measuredOver.days} day(s) at ${report.measuredOver.containers} evaluator(s): ${report.costPerContainer.toFixed(3)} concurrent connection(s) per evaluator.`);
       console.log(`At ${report.running} evaluator(s), projected month end ${report.projectedMonthEnd === null ? 'unknown' : report.projectedMonthEnd.toFixed(2)}; affordable ${report.affordableContainers ?? 'unknown'}.`);
