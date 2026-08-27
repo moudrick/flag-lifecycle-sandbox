@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor, targetingInstructions, warmRepositoryIndex, probeRepositoryIndex, connectionBudget, assertBudget, BUDGET_SEVERITY } from '../lib.mjs';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor, targetingInstructions, warmRepositoryIndex, probeRepositoryIndex, connectionBudget, assertBudget, BUDGET_SEVERITY, generateCompose, composeServiceName, releaseTrees, materialiseReleases, featureBlocks, featureFunctionName } from '../lib.mjs';
 const catalogFile = JSON.parse(fs.readFileSync(new URL('../scenario/flags.json', import.meta.url), 'utf8'));
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
@@ -275,7 +275,10 @@ test('Compose covers every repository/environment pair without evaluating the re
   const block = compose.slice(compose.indexOf('\nservices:\n'));
   const declared = [...block.matchAll(/^ {2}([a-z0-9-]+):$/gm)].map((match) => match[1]).sort();
   const model = compileScenario(scenarioFiles);
-  const expected = model.deployments.map((tuple) => `${tuple.service.replace(/^demo-/, '')}-${tuple.environment}`).sort();
+  // The tracked file is generated, so hold it to the generator rather than re-deriving its shape.
+  // Any drift means someone edited runtime/compose.yaml by hand instead of running scenario compose.
+  assert.equal(compose, generateCompose(model, scenarioFiles.services, scenarioFiles.sandbox), 'runtime/compose.yaml must match the generator; run "node demo.mjs scenario compose"');
+  const expected = model.deployments.map((tuple) => composeServiceName(tuple.service, tuple.environment, tuple.cluster)).sort();
   assert.deepEqual(declared, expected, 'Compose must declare exactly the deployment tuples the active step selects');
   assert.ok(declared.length <= scenarioFiles.sandbox.limits.maxEvaluatorContainers);
   for (const { key } of ENVIRONMENTS) {
@@ -899,4 +902,99 @@ test('campaign lock leaves read-only audit unaffected', async () => {
   const fetcher = async (url) => ({ ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ items: [], total_count: 0 }) });
   let message = ''; try { await audit(fetcher, lockedEnv); } catch (error) { message = error.message; }
   assert.ok(!/Campaign lock/.test(message), message);
+});
+
+// --- Per-cluster drain: a release is removed from clusters one at a time, so evaluations for a
+// removed flag fall in visible steps rather than vanishing all at once. Steps are built from the
+// live scenario so they cannot rot as real steps are appended.
+const drainStep = (deploy, extra = {}) => ({
+  schemaVersion: 1, id: 's900', title: 'synthetic drain', recommendedDate: '2099-01-01', cadence: 'daily',
+  transition: 'production-expansion', deploy, ...extra
+});
+const withStep = (step) => ({ ...scenarioFiles, steps: [...scenarioFiles.steps, step] });
+const ordersTag = () => {
+  for (const step of [...scenarioFiles.steps].reverse()) if (step.releaseTags?.['demo-orders']) return step.releaseTags['demo-orders'];
+  return 'v001';
+};
+const productionClusters = scenarioFiles.sandbox.environments.find((item) => item.key === 'production').clusters.map((item) => item.key);
+
+test('a cluster-pinned deployment reaches Compose as its own service on its own release image', () => {
+  const tag = ordersTag();
+  const deploy = productionClusters.map((cluster, index) => ({
+    service: 'demo-orders', environment: 'production', cluster, release: index < 2 ? tag : tag, traffic: 'business-hours-production'
+  }));
+  const model = compileScenario(withStep(drainStep(deploy)));
+  const yaml = generateCompose(model, scenarioFiles.services, scenarioFiles.sandbox);
+  const block = yaml.slice(yaml.indexOf('\nservices:\n'));
+  const declared = [...block.matchAll(/^ {2}([a-z0-9-]+):$/gm)].map((match) => match[1]);
+  assert.equal(declared.length, productionClusters.length, 'each pinned cluster is a separate evaluator');
+  assert.equal(new Set(declared).size, declared.length, 'cluster service names must be unique');
+  // Every pinned service pins its cluster, or the evaluator would pick one at random and the
+  // ladder would have no steps.
+  assert.equal([...yaml.matchAll(/^ {6}DEMO_CLUSTER: /gm)].length, productionClusters.length);
+  for (const cluster of productionClusters) assert.match(yaml, new RegExp(`DEMO_CLUSTER: ${cluster}$`, 'm'));
+  // Clusters on one release share one build tree and one image, so the drain rebuilds nothing twice.
+  assert.equal([...yaml.matchAll(/^ {2}build: /gm)].length, 1);
+  assert.match(yaml, new RegExp(`image: clean-room-demo/demo-orders:${tag}$`, 'm'));
+  assert.match(yaml, new RegExp(`build: [.]/worktrees/demo-orders-${tag}$`, 'm'));
+});
+
+test('clusters may lag on an older release but never run one that does not exist yet', () => {
+  const tag = ordersTag();
+  const ahead = `v${String(Number(tag.slice(1)) + 1).padStart(3, '0')}`;
+  const one = (cluster, release) => ({ service: 'demo-orders', environment: 'production', cluster, release, traffic: 'business-hours-production' });
+  assert.throws(() => compileScenario(withStep(drainStep([one(productionClusters[0], ahead)]))), /ahead of its latest tag/);
+  assert.doesNotThrow(() => compileScenario(withStep(drainStep([one(productionClusters[0], tag)]))));
+  assert.throws(() => compileScenario(withStep(drainStep([one('prod-not-a-cluster', tag)]))), /not in production/);
+  assert.throws(() => compileScenario(withStep(drainStep([one(productionClusters[0], 'latest')]))), /invalid release/);
+});
+
+test('a whole-environment evaluator cannot coexist with a cluster-pinned one for the same service', () => {
+  const tag = ordersTag();
+  const mixed = [
+    { service: 'demo-orders', environment: 'production', traffic: 'business-hours-production' },
+    { service: 'demo-orders', environment: 'production', cluster: productionClusters[0], release: tag, traffic: 'business-hours-production' }
+  ];
+  assert.throws(() => compileScenario(withStep(drainStep(mixed))), /double-count evaluations/);
+  const twice = [
+    { service: 'demo-orders', environment: 'production', cluster: productionClusters[0], release: tag, traffic: 'business-hours-production' },
+    { service: 'demo-orders', environment: 'production', cluster: productionClusters[0], release: tag, traffic: 'business-hours-production' }
+  ];
+  assert.throws(() => compileScenario(withStep(drainStep(twice))), /twice/);
+});
+
+test('materialising releases checks out each pinned tag once and reuses a tree already on that commit', async () => {
+  const tag = ordersTag();
+  const deploy = productionClusters.slice(0, 3).map((cluster) => ({ service: 'demo-orders', environment: 'production', cluster, release: tag, traffic: 'business-hours-production' }));
+  const model = compileScenario(withStep(drainStep(deploy)));
+  assert.deepEqual(releaseTrees(model).map((tree) => tree.tag), [`demo-orders-${tag}`], 'three clusters on one release need one tree');
+  const sha = 'a'.repeat(40);
+  const files = new Map();
+  const calls = [];
+  const fileSystem = {
+    existsSync: (target) => files.has(target) || String(target).endsWith('demo-orders'),
+    readFileSync: (target) => files.get(target),
+    writeFileSync: (target, content) => files.set(target, content),
+    mkdirSync: () => {},
+    rmSync: (target) => { calls.push(['rm', target]); files.delete(target); }
+  };
+  const run = async (cwd, args) => { calls.push([args[0], args.slice(1).join(' ')]); return args[0] === 'rev-parse' ? `${sha}\n` : ''; };
+  const first = await materialiseReleases(model, { root: process.cwd(), fileSystem, run });
+  assert.equal(first.materialised.length, 1);
+  assert.equal(first.materialised[0].reused, false);
+  assert.equal(first.materialised[0].sha, sha);
+  assert.deepEqual(calls.filter(([kind]) => kind === 'worktree').map(([, rest]) => rest.split(' ')[0]), ['prune', 'add']);
+  assert.ok(calls.some(([kind, rest]) => kind === 'fetch' && rest.includes(`tag demo-orders-${tag}`)), 'a tag from a later step is not in a shallow clone yet');
+  const second = await materialiseReleases(model, { root: process.cwd(), fileSystem, run });
+  assert.equal(second.materialised[0].reused, true, 'a tree already on the tagged commit is left alone');
+  assert.equal(calls.filter(([kind, rest]) => kind === 'worktree' && rest.startsWith('add')).length, 1, 'no second checkout');
+});
+
+test('a model with no pinned release needs no worktree and touches no git command', async () => {
+  const model = compileScenario(scenarioFiles);
+  assert.deepEqual(releaseTrees(model), []);
+  const calls = [];
+  const result = await materialiseReleases(model, { root: process.cwd(), fileSystem: { existsSync: () => true, mkdirSync: () => { calls.push('mkdir'); } }, run: async () => { calls.push('git'); } });
+  assert.deepEqual(result.materialised, []);
+  assert.deepEqual(calls, [], 'the current campaign must keep building from the default branch exactly as before');
 });

@@ -3,3 +3,4 @@ node_modules/
 runtime/sdk-keys.env
 runtime/repos/
 runtime/scenario-state.json
+runtime/worktrees/

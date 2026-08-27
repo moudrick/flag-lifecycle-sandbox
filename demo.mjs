@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { doctor, recreate, refresh, destroy, audit, baseline, bootstrapFlags, mergeCampaign, campaignWithIndexing, warmRepositoryIndex, connectionBudget, fetchServiceConnections, loadScenario, compileScenario, stepsThrough, reconcileStep, scenarioStatus, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
+import { doctor, recreate, refresh, destroy, audit, baseline, bootstrapFlags, mergeCampaign, campaignWithIndexing, warmRepositoryIndex, connectionBudget, generateCompose, materialiseReleases, releaseTrees, fetchServiceConnections, loadScenario, compileScenario, stepsThrough, reconcileStep, scenarioStatus, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
 
 function loadEnv() {
   const file = '.env';
@@ -122,6 +122,23 @@ try {
       state.appliedSteps = [...state.appliedSteps.filter((item) => item.id !== result.step), { id: result.step, checksum: result.checksum, appliedAt: new Date().toISOString(), created: result.created.map((item) => ({ service: item.service, repositoryId: item.repositoryId, commitSha: item.commitSha, tag: item.tag, firstPushAt: item.firstPushAt })) }];
       fs.writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
       console.log(`Recorded applied state in ${stateFile}.`);
+    } else if (sub === 'compose') {
+      // Regenerating is safe at any time: it rewrites a tracked file and checks out immutable tags.
+      // Nothing here touches LaunchDarkly, GitHub state, or a running container.
+      const compiled = compileScenario(scenario);
+      const trees = releaseTrees(compiled);
+      console.log(`Pinned release trees required by the active step: ${trees.length ? trees.map((tree) => tree.tag).join(', ') : 'none'}`);
+      if (trees.length) {
+        const { materialised } = await materialiseReleases(compiled, { root: process.cwd() });
+        for (const tree of materialised) console.log(`  ${tree.tag} | ${tree.sha.slice(0, 12)} | ${tree.reused ? 'already current' : 'checked out'}`);
+      }
+      const file = 'runtime/compose.yaml';
+      const yaml = generateCompose(compiled, scenario.services, scenario.sandbox);
+      const changed = !fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== yaml;
+      fs.writeFileSync(file, yaml);
+      console.log(`${changed ? 'Rewrote' : 'Confirmed unchanged'} ${file}: ${compiled.deployments.length} evaluator(s) of maximum ${scenario.sandbox.limits.maxEvaluatorContainers}.`);
+      for (const tuple of compiled.deployments) console.log(`  ${tuple.service}/${tuple.environment}${tuple.cluster ? `/${tuple.cluster}` : ''} | ${tuple.release || 'default branch'} | ${tuple.traffic}`);
+      if (changed) console.log('Restart the runtime with the documented docker compose command to pick this up.');
     } else if (sub === 'index') {
       const campaignFile = 'campaign.json';
       const previous = fs.existsSync(campaignFile) ? JSON.parse(fs.readFileSync(campaignFile, 'utf8')) : null;
@@ -193,6 +210,6 @@ try {
       for (const warning of report.warnings) console.log(`WARNING: ${warning}`);
       console.log('TIER | EVALUATORS | KEEP');
       for (const tier of budget.tiers || []) console.log(`${tier.name} | ${tier.containers} | ${tier.keep}`);
-    } else throw new Error('Usage: node demo.mjs scenario <list|plan|apply|status|index|budget> [--to <step>] [--record <used>]');
+    } else throw new Error('Usage: node demo.mjs scenario <list|plan|apply|compose|status|index|budget> [--to <step>] [--record <used>]');
   } else throw new Error('Usage: node demo.mjs <doctor|baseline|bootstrap|scenario|recreate|refresh|audit|destroy> [--confirm $LD_PROJECT_KEY]');
 } catch (error) { console.error(`Error: ${redact(error, secrets)}`); process.exitCode = 1; }

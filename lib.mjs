@@ -409,6 +409,14 @@ export function isLoadProbe(repository, profile) { return repository === 'demo-o
 export function clusterFor(repository, profile, index) {
   const choices = clusters[profile];
   if (!choices || !knownService(repository) || !Number.isSafeInteger(index) || index < 0) throw new Error('Invalid cluster input.');
+  // A pinned evaluator represents one deployment on one cluster, which is what lets different
+  // clusters run different release tags and makes a code-removal drain fall in visible steps.
+  const pinned = process.env.DEMO_CLUSTER;
+  if (pinned) {
+    const fixed = choices.find((item) => item.key === pinned);
+    if (!fixed) throw new Error('DEMO_CLUSTER does not belong to this environment.');
+    const { weight: pinnedWeight, ...pinnedContext } = fixed; return pinnedContext;
+  }
   const bucket = (index * 17 + offsetFor(repository)) % 100; let boundary = 0;
   const selected = choices.find((item) => { boundary += item.weight; return bucket < boundary; });
   if (!selected || !clusterKey.test(selected.key)) throw new Error('Invalid cluster configuration.');
@@ -992,6 +1000,9 @@ export async function prepareRuntime(settings, environments, generation, control
   const fileSystem = controls.fileSystem || fs; const root = controls.root || process.cwd(); const runtime = runtimeDirectory(root); const repos = path.join(runtime, 'repos');
   const keyFile = path.join(runtime, 'sdk-keys.env');
   const clone = controls.clone || (async (url, target) => execFileAsync('git', ['clone', '--depth', '1', url, target], { cwd: root, windowsHide: true }));
+  // Worktrees are checkouts of these repositories, so they go first: leaving them behind would
+  // orphan them against a repository that no longer exists.
+  fileSystem.rmSync(path.join(runtime, 'worktrees'), { recursive: true, force: true });
   fileSystem.rmSync(repos, { recursive: true, force: true }); fileSystem.rmSync(keyFile, { force: true }); fileSystem.mkdirSync(repos, { recursive: true });
   const lines = ENVIRONMENT_KEYS.map((key) => {
     const environment = environments.find((item) => item.key === key); return `LD_EVALUATION_SDK_KEY_${key.toUpperCase()}=${environment.apiKey}`;
@@ -1013,6 +1024,7 @@ export async function prepareRuntime(settings, environments, generation, control
 export function cleanRuntime(root = process.cwd(), fileSystem = fs) {
   const runtime = runtimeDirectory(root);
   fileSystem.rmSync(path.join(runtime, 'sdk-keys.env'), { force: true });
+  fileSystem.rmSync(path.join(runtime, 'worktrees'), { recursive: true, force: true });
   fileSystem.rmSync(path.join(runtime, 'repos'), { recursive: true, force: true });
 }
 export async function assertRuntimeStopped(root = process.cwd(), controls = {}) {
@@ -1434,9 +1446,23 @@ export function compileScenario({ sandbox, services, catalog, steps, budget }, c
         if (!introduced.has(tuple.service)) throw new Error(`Step ${step.id} deploys ${tuple.service}, which is not introduced yet.`);
         if (!environmentClusters.has(tuple.environment)) throw new Error(`Step ${step.id} deploys ${tuple.service} to unknown environment ${tuple.environment}.`);
         if (tuple.traffic && !patterns.has(tuple.traffic)) throw new Error(`Step ${step.id} uses unknown traffic pattern ${tuple.traffic}.`);
-        const identity = `${tuple.service}/${tuple.environment}`;
-        if (next.some((item) => `${item.service}/${item.environment}` === identity)) throw new Error(`Step ${step.id} declares ${identity} twice.`);
-        next.push({ service: tuple.service, environment: tuple.environment, traffic: tuple.traffic || 'silent' });
+        // cluster and release are optional. Without them an evaluator represents the whole
+        // environment on the latest release, which is every existing step. With them it
+        // represents one deployment on one cluster at one immutable tag, which is what makes a
+        // code-removal drain fall in visible steps instead of one cliff.
+        if (tuple.cluster !== undefined) {
+          const known = environmentClusters.get(tuple.environment).some((entry) => entry.key === tuple.cluster);
+          if (!known) throw new Error(`Step ${step.id} pins ${tuple.service} to cluster ${tuple.cluster}, which is not in ${tuple.environment}.`);
+        }
+        if (tuple.release !== undefined) {
+          if (!/^v\d{3}$/.test(tuple.release)) throw new Error(`Step ${step.id} declares an invalid release ${tuple.release} for ${tuple.service}.`);
+          const current = introduced.get(tuple.service).tag;
+          if (current && tuple.release > current) throw new Error(`Step ${step.id} deploys ${tuple.service} at ${tuple.release}, which is ahead of its latest tag ${current}. A cluster can lag a release but never run one that does not exist yet.`);
+        }
+        const identity = `${tuple.service}/${tuple.environment}/${tuple.cluster || 'all'}`;
+        if (next.some((item) => `${item.service}/${item.environment}/${item.cluster || 'all'}` === identity)) throw new Error(`Step ${step.id} declares ${identity} twice.`);
+        if (tuple.cluster && next.some((item) => item.service === tuple.service && item.environment === tuple.environment && !item.cluster)) throw new Error(`Step ${step.id} mixes a whole-environment evaluator with a cluster-pinned one for ${tuple.service}/${tuple.environment}; that would double-count evaluations.`);
+        next.push({ service: tuple.service, environment: tuple.environment, traffic: tuple.traffic || 'silent', ...(tuple.cluster ? { cluster: tuple.cluster } : {}), ...(tuple.release ? { release: tuple.release } : {}) });
       }
       const cap = sandbox.limits.maxEvaluatorContainers;
       if (next.length > cap) throw new Error(`Step ${step.id} declares ${next.length} evaluator containers, exceeding the cap of ${cap}.`);
@@ -1520,8 +1546,64 @@ export const TEMPLATE_RUNTIME = {
   go: { command: ['/app/evaluator', '--traffic', '--profile'] },
   python: { command: ['python', '-u', 'app.py', '--traffic', '--profile'] }
 };
-export function composeServiceName(serviceKey, environment) {
-  return `${serviceKey.replace(/^demo-/, '')}-${environment}`;
+export function composeServiceName(serviceKey, environment, cluster) {
+  const base = `${serviceKey.replace(/^demo-/, '')}-${environment}`;
+  // A cluster-pinned evaluator gets its own service so several can run side by side, each on a
+  // different release tag. The suffix drops the environment prefix to keep names readable.
+  return cluster ? `${base}-${cluster.replace(/^(prod|stg|test|dev)-/, '')}` : base;
+}
+// The on-disk name of a source tree, and for a pinned release also its git tag. One spelling only:
+// the Compose anchor, the worktree directory and the tag must never drift apart.
+export function worktreeName(serviceKey, release) {
+  return release ? `${serviceKey}-${release}` : serviceKey;
+}
+// The distinct source trees a compiled model needs on disk. A service with no pinned release
+// builds from its checked-out default branch; every pinned release gets its own immutable tree so
+// clusters on different tags can run side by side.
+export function releaseTrees(model) {
+  const trees = new Map();
+  for (const tuple of model.deployments) {
+    if (!tuple.release) continue;
+    const name = worktreeName(tuple.service, tuple.release);
+    if (!trees.has(name)) trees.set(name, { service: tuple.service, release: tuple.release, name, tag: name });
+  }
+  return [...trees.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+// Materialise every pinned release as a detached worktree of its immutable tag. Idempotent: a tree
+// already sitting on the right commit is left alone, so re-running costs nothing and a drain step
+// only rebuilds the clusters that actually moved.
+export async function materialiseReleases(model, controls = {}) {
+  const fileSystem = controls.fileSystem || fs;
+  const root = controls.root || process.cwd();
+  const runtime = runtimeDirectory(root);
+  const repos = path.join(runtime, 'repos');
+  const worktrees = path.join(runtime, 'worktrees');
+  const run = controls.run || (async (cwd, args) => execFileAsync('git', args, { cwd, windowsHide: true }));
+  const text = (result) => String(typeof result === 'string' ? result : (result?.stdout ?? '')).trim();
+  const trees = releaseTrees(model);
+  if (trees.length) fileSystem.mkdirSync(worktrees, { recursive: true });
+  const materialised = [];
+  for (const tree of trees) {
+    const repository = path.join(repos, tree.service);
+    if (!fileSystem.existsSync(repository)) throw new Error(`Cannot materialise ${tree.tag}: ${repository} is not checked out. Run recreate or refresh first.`);
+    const target = path.join(worktrees, tree.name);
+    const stamp = path.join(target, '.release-sha');
+    // Repositories are cloned shallow, so a tag written by a later step is not local yet.
+    await run(repository, ['fetch', '--depth', '1', 'origin', 'tag', tree.tag, '--no-tags']);
+    const sha = text(await run(repository, ['rev-parse', `${tree.tag}^{commit}`]));
+    if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error(`Tag ${tree.tag} did not resolve to a commit.`);
+    if (fileSystem.existsSync(stamp) && fileSystem.readFileSync(stamp, 'utf8').trim() === sha) {
+      materialised.push({ ...tree, sha, path: target, reused: true });
+      continue;
+    }
+    fileSystem.rmSync(target, { recursive: true, force: true });
+    await run(repository, ['worktree', 'prune']);
+    await run(repository, ['worktree', 'add', '--detach', target, sha]);
+    fileSystem.writeFileSync(stamp, `${sha}
+`);
+    materialised.push({ ...tree, sha, path: target, reused: false });
+  }
+  return { worktrees, materialised };
 }
 export function generateCompose(model, services, sandbox) {
   const byKey = new Map(services.services.map((service) => [service.key, service]));
@@ -1540,23 +1622,33 @@ export function generateCompose(model, services, sandbox) {
     '    max-file: "3"',
     ''
   ];
-  for (const key of deployed) {
-    const service = byKey.get(key);
-    if (!service) throw new Error(`Compose generation found no catalog entry for ${key}.`);
-    lines.push(`x-${key.replace(/^demo-/, '')}: &${key.replace(/^demo-/, '')}`, `  build: ./repos/${key}`, `  image: clean-room-demo/${key}:local`,
+  // One anchor per distinct source tree: a service on its own, plus one per pinned release.
+  const trees = new Map();
+  for (const tuple of model.deployments) {
+    const name = worktreeName(tuple.service, tuple.release);
+    if (!trees.has(name)) trees.set(name, { service: tuple.service, release: tuple.release, name });
+  }
+  for (const tree of [...trees.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+    const service = byKey.get(tree.service);
+    if (!service) throw new Error(`Compose generation found no catalog entry for ${tree.service}.`);
+    const anchor = tree.name.replace(/^demo-/, '');
+    const path = tree.release ? `./worktrees/${tree.name}` : `./repos/${tree.service}`;
+    lines.push(`x-${anchor}: &${anchor}`, `  build: ${path}`, `  image: clean-room-demo/${tree.service}:${tree.release || 'local'}`,
       '  init: true', '  restart: unless-stopped', '  stop_grace_period: 30s', '  logging: *rotated-logs', '');
   }
   lines.push('services:');
   const order = sandbox.environments.map((environment) => environment.key);
-  const sorted = [...model.deployments].sort((a, b) => order.indexOf(a.environment) - order.indexOf(b.environment) || a.service.localeCompare(b.service));
+  const sorted = [...model.deployments].sort((a, b) => order.indexOf(a.environment) - order.indexOf(b.environment) || a.service.localeCompare(b.service) || String(a.cluster || '').localeCompare(String(b.cluster || '')));
   for (const tuple of sorted) {
     const service = byKey.get(tuple.service);
     const runtime = TEMPLATE_RUNTIME[service.template];
     if (!runtime) throw new Error(`No container runtime defined for template ${service.template}.`);
     const probe = sandbox.trafficPatterns?.[tuple.traffic]?.kind === 'paced';
-    lines.push(`  ${composeServiceName(tuple.service, tuple.environment)}:`, `    <<: *${tuple.service.replace(/^demo-/, '')}`, '    environment:', '      <<: *runtime-environment',
+    const anchor = worktreeName(tuple.service, tuple.release).replace(/^demo-/, '');
+    lines.push(`  ${composeServiceName(tuple.service, tuple.environment, tuple.cluster)}:`, `    <<: *${anchor}`, '    environment:', '      <<: *runtime-environment',
       `      LD_EVALUATION_SDK_KEY: \${LD_EVALUATION_SDK_KEY_${tuple.environment.toUpperCase()}:?missing ${tuple.environment} SDK key}`,
       `      DEMO_ENVIRONMENT: ${tuple.environment}`);
+    if (tuple.cluster) lines.push(`      DEMO_CLUSTER: ${tuple.cluster}`);
     if (probe) lines.push('      DEMO_LOAD_PROBE: "true"', '      DEMO_EVALUATIONS_PER_HOUR: ${DEMO_EVALUATIONS_PER_HOUR:-1200}', '      DEMO_CONTEXT_POOL_SIZE: ${DEMO_CONTEXT_POOL_SIZE:-1000}');
     lines.push(`    command: [${[...runtime.command, tuple.environment].map((part) => `"${part}"`).join(', ')}]`);
   }
