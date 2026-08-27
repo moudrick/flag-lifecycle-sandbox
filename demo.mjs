@@ -105,7 +105,7 @@ try {
       for (const [key, removals] of Object.entries(step.prepareRemoval || {})) console.log(`  ${key} gets an OPEN pull request removing ${removals.join(', ')}; nothing on main changes until it is merged`);
       for (const [key, version] of Object.entries(step.releaseTags || {})) console.log(`  ${key} tag ${key}-${version}`);
       console.log(`Deployment tuples after this step: ${compiled.deployments.length} of maximum ${scenario.sandbox.limits.maxEvaluatorContainers}`);
-      for (const tuple of compiled.deployments) console.log(`  ${tuple.service}/${tuple.environment} ${tuple.traffic}`);
+      for (const tuple of compiled.deployments) console.log(`  ${tuple.service}/${tuple.environment}${tuple.cluster ? `/${tuple.cluster}` : ''} ${tuple.release || 'default branch'} ${tuple.traffic}`);
       if (step.targeting?.length) {
         console.log(`Targeting changes in this step: ${step.targeting.length}`);
         for (const entry of step.targeting) console.log(`  ${entry.flag} / ${entry.environment}: ${entry.state}, serving ${entry.serve || 'false'}${entry.clusters?.length ? `, clusters ${entry.clusters.join(', ')}` : ''}${entry.exception ? ` (exception: ${entry.exception})` : ''}`);
@@ -132,7 +132,13 @@ try {
     } else if (sub === 'compose') {
       // Regenerating is safe at any time: it rewrites a tracked file and checks out immutable tags.
       // Nothing here touches LaunchDarkly, GitHub state, or a running container.
-      const compiled = compileScenario(scenario);
+      // The runtime reflects what has been APPLIED, never the whole scenario file: later steps are
+      // a plan, and generating their Compose would start evaluators for releases that do not exist.
+      const applied = readState().appliedSteps.map((item) => item.id).sort();
+      const upto = target || applied.at(-1);
+      if (!upto) throw new Error('No step has been applied yet, so there is no runtime to generate.');
+      const compiled = compileScenario({ ...scenario, steps: stepsThrough(scenario.steps, upto) });
+      console.log(`Generating the runtime as of ${upto}${target ? ' (requested with --to)' : ' (the last applied step)'}.`);
       const trees = releaseTrees(compiled);
       console.log(`Pinned release trees required by the active step: ${trees.length ? trees.map((tree) => tree.tag).join(', ') : 'none'}`);
       if (trees.length) {

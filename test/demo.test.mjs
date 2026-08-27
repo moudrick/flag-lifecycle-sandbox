@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor, targetingInstructions, warmRepositoryIndex, probeRepositoryIndex, connectionBudget, assertBudget, BUDGET_SEVERITY, archiveReadiness, ARCHIVE_GATES, generateCompose, composeServiceName, releaseTrees, materialiseReleases, featureBlocks, featureFunctionName } from '../lib.mjs';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, stepsThrough, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor, targetingInstructions, warmRepositoryIndex, probeRepositoryIndex, connectionBudget, assertBudget, BUDGET_SEVERITY, archiveReadiness, ARCHIVE_GATES, generateCompose, composeServiceName, releaseTrees, materialiseReleases, featureBlocks, featureFunctionName } from '../lib.mjs';
 const catalogFile = JSON.parse(fs.readFileSync(new URL('../scenario/flags.json', import.meta.url), 'utf8'));
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
@@ -270,11 +270,18 @@ test('runtime preparation removes partial artifacts when a clone fails', async (
   assert.equal(operations.filter(([kind, target]) => kind === 'rm' && /runtime[\\/]repos$/.test(target)).length, 2);
   assert.equal(operations.filter(([kind, target]) => kind === 'rm' && /runtime[\\/]sdk-keys\.env$/.test(target)).length, 2);
 });
+// scenario/steps holds applied steps AND a plan for later ones. Anything compared against the live
+// runtime must compile only what has actually been applied, or it compares today against a future.
+const appliedModel = () => {
+  const state = JSON.parse(fs.readFileSync(new URL('../runtime/scenario-state.json', import.meta.url), 'utf8'));
+  const last = state.appliedSteps.map((item) => item.id).sort().at(-1);
+  return compileScenario({ ...scenarioFiles, steps: stepsThrough(scenarioFiles.steps, last) });
+};
 test('Compose covers every repository/environment pair without evaluating the retired flag', () => {
   const compose = fs.readFileSync(new URL('../runtime/compose.yaml', import.meta.url), 'utf8');
   const block = compose.slice(compose.indexOf('\nservices:\n'));
   const declared = [...block.matchAll(/^ {2}([a-z0-9-]+):$/gm)].map((match) => match[1]).sort();
-  const model = compileScenario(scenarioFiles);
+  const model = appliedModel();
   // The tracked file is generated, so hold it to the generator rather than re-deriving its shape.
   // Any drift means someone edited runtime/compose.yaml by hand instead of running scenario compose.
   assert.equal(compose, generateCompose(model, scenarioFiles.services, scenarioFiles.sandbox), 'runtime/compose.yaml must match the generator; run "node demo.mjs scenario compose"');
@@ -684,10 +691,15 @@ test('the budget refuses fabricated observations and warns on stale ones', () =>
   assert.ok(stale.warnings.some((line) => /hours old/.test(line)), 'an old reading must not be trusted silently');
 });
 test('the compiled scenario carries a budget verdict for the deployment it declares', () => {
-  const model = compileScenario(scenarioFiles);
+  // What is actually running must fit the measured budget. What is merely planned may exceed it,
+  // because a plan can be dated after the metered month resets — but it must then say so out loud
+  // rather than pass silently.
+  const model = appliedModel();
   assert.ok(model.budget, 'the compiler must attach a budget verdict when budget.json is present');
-  assert.ok(model.deployments.length <= Math.max(1, model.budget.affordableContainers), `scenario declares ${model.deployments.length}, affords ${model.budget.affordableContainers}`);
-  assert.equal(model.budgetWarning, undefined, 'no warning expected while the declared deployment fits the measured budget');
+  assert.ok(model.deployments.length <= Math.max(1, model.budget.affordableContainers), `running configuration declares ${model.deployments.length}, affords ${model.budget.affordableContainers}`);
+  assert.equal(model.budgetWarning, undefined, 'no warning expected while the running deployment fits the measured budget');
+  const planned = compileScenario(scenarioFiles);
+  if (planned.deployments.length > planned.budget.affordableContainers) assert.match(planned.budgetWarning, /CONNECTION BUDGET/, 'a plan beyond measured affordability must warn');
   // A measured cost of zero means nothing is affordable-limited, so force the warning with a
   // budget whose measured interval has real cost rather than by shrinking the limit.
   const costly = { ...scenarioFiles, budget: { schemaVersion: 1, limit: 5, observations: [
@@ -739,8 +751,12 @@ test('the compiler is forward-only and refuses contract violations', () => {
   assert.throws(() => compileScenario(daily), /daily cadence outside the permitted/);
   const allowedDaily = base(); allowedDaily.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: after(allowedDaily), cadence: 'daily', transition: 'staging-canary' });
   assert.doesNotThrow(() => compileScenario(allowedDaily), 'a named short transition may use daily cadence');
-  const inWindow = base(); inWindow.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-09-11', cadence: 'daily' });
-  assert.doesNotThrow(() => compileScenario(inWindow), 'the screenshot window permits daily cadence');
+  const inWindow = base();
+  const lastDate = inWindow.steps.at(-1).recommendedDate;
+  const window = inWindow.sandbox.cadence.dailyWindows.find((item) => item.to >= lastDate);
+  assert.ok(window, 'the plan has outgrown every daily window; extend sandbox.cadence or the windows are dead');
+  inWindow.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: window.from > lastDate ? window.from : lastDate, cadence: 'daily' });
+  assert.doesNotThrow(() => compileScenario(inWindow), `the ${window.reason} permits daily cadence`);
   const overCap = base();
   overCap.sandbox.limits.maxEvaluatorContainers = 4;
   assert.throws(() => compileScenario(overCap), /exceeding the cap of 4/);
@@ -991,7 +1007,8 @@ test('materialising releases checks out each pinned tag once and reuses a tree a
 });
 
 test('a model with no pinned release needs no worktree and touches no git command', async () => {
-  const model = compileScenario(scenarioFiles);
+  // The running campaign, not the plan: later steps pin releases on purpose.
+  const model = appliedModel();
   assert.deepEqual(releaseTrees(model), []);
   const calls = [];
   const result = await materialiseReleases(model, { root: process.cwd(), fileSystem: { existsSync: () => true, mkdirSync: () => { calls.push('mkdir'); } }, run: async () => { calls.push('git'); } });

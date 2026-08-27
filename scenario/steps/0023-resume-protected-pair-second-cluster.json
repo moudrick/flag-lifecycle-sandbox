@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "id": "s023",
+  "title": "Protected pair takes its second cluster; open track crawls one more",
+  "recommendedDate": "2026-08-27",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "targeting": [
+    {
+      "flag": "demo-express-returns",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02"
+      ]
+    },
+    {
+      "flag": "demo-profile-preferences",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02"
+      ]
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02",
+        "prod-emea-central-04"
+      ]
+    },
+    {
+      "flag": "demo-identity-passkeys",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02"
+      ]
+    },
+    {
+      "flag": "demo-recommendation-model-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02"
+      ]
+    }
+  ],
+  "notes": [
+    "The protected pair has sat on one cluster since s021 on 22 August, five days without moving. They are the flags to be archived on stage, so their rollout is the schedule-critical path and it stops drifting here.",
+    "Second cluster is prod-sa-east-02, taking both flags from five to fifteen per cent. Four clusters remain; at one every two to three days they finish comfortably inside the first half of September.",
+    "demo-tax-calculation-v2 advances to its fourth cluster, sixty per cent. It was frozen at thirty for days and its consumer demo-checkout is deployed again, so it is buying evidence rather than only advancing a number.",
+    "Targeting only. No evaluator is added or removed, so the connection budget is untouched with 76 per cent of the month spent and four days left."
+  ]
+}

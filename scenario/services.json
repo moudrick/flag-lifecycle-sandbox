@@ -59,7 +59,8 @@
         "demo-order-history-v2",
         "demo-profile-preferences"
       ],
-      "note": "Holds the dangling-reference case demo-legacy-profile."
+      "note": "Holds the dangling-reference case demo-legacy-profile. Behaviour-style source: it is the service that receives the demo removal pull request, so its flags sit at named call sites where a removal reads as a function disappearing.",
+      "sourceStyle": "behaviour"
     },
     {
       "key": "demo-catalog",
