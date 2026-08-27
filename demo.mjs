@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { doctor, recreate, refresh, destroy, audit, baseline, bootstrapFlags, mergeCampaign, campaignWithIndexing, warmRepositoryIndex, connectionBudget, generateCompose, materialiseReleases, releaseTrees, fetchServiceConnections, loadScenario, compileScenario, stepsThrough, reconcileStep, scenarioStatus, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
+import { doctor, recreate, refresh, destroy, audit, baseline, bootstrapFlags, mergeCampaign, campaignWithIndexing, warmRepositoryIndex, connectionBudget, flagEvaluationStatus, ARCHIVE_GATES, generateCompose, materialiseReleases, releaseTrees, fetchServiceConnections, loadScenario, compileScenario, stepsThrough, reconcileStep, scenarioStatus, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
 
 function loadEnv() {
   const file = '.env';
@@ -146,6 +146,26 @@ try {
       console.log(`${changed ? 'Rewrote' : 'Confirmed unchanged'} ${file}: ${compiled.deployments.length} evaluator(s) of maximum ${scenario.sandbox.limits.maxEvaluatorContainers}.`);
       for (const tuple of compiled.deployments) console.log(`  ${tuple.service}/${tuple.environment}${tuple.cluster ? `/${tuple.cluster}` : ''} | ${tuple.release || 'default branch'} | ${tuple.traffic}`);
       if (changed) console.log('Restart the runtime with the documented docker compose command to pick this up.');
+    } else if (sub === 'evaluations') {
+      const report = await flagEvaluationStatus(fetch, env);
+      console.log(`Evaluation recency at ${report.checkedAt}. Archive needs a flag at least ${ARCHIVE_GATES.minimumFlagAgeDays} days old and silent in every critical environment for ${ARCHIVE_GATES.noEvaluationDays} days.`);
+      console.log('FLAG | AGE | SILENT FOR | CRITICAL ENVIRONMENTS | VERDICT');
+      for (const flag of report.flags) {
+        const critical = flag.environments.filter((row) => row.critical).map((row) => `${row.environment}:${row.state}${row.lastRequested ? '' : ' (never)'}`).join(' ');
+        const silent = flag.silentDays === null ? '-' : (flag.silentDays === Infinity ? 'never evaluated' : `${flag.silentDays.toFixed(1)}d`);
+        console.log(`${flag.key} | ${flag.ageDays === null ? '-' : `${flag.ageDays.toFixed(0)}d`} | ${silent} | ${critical} | ${flag.ready ? 'READY TO ARCHIVE' : flag.blockers.join('; ')}`);
+      }
+      const ready = report.flags.filter((flag) => flag.ready);
+      console.log(`Ready to archive now: ${ready.length ? ready.map((flag) => flag.key).join(', ') : 'none'}.`);
+      // A flag that is quiet but not yet quiet enough is the one worth watching, because its clock
+      // is running and any stray evaluation resets it.
+      const draining = report.flags.filter((flag) => !flag.ready && Number.isFinite(flag.silentDays) && flag.silentDays >= 1);
+      for (const flag of draining) {
+        const remaining = ARCHIVE_GATES.noEvaluationDays - flag.silentDays;
+        console.log(remaining > 0
+          ? `DRAINING: ${flag.key} has been silent ${flag.silentDays.toFixed(1)}d; it clears the evaluation gate in ${remaining.toFixed(1)}d if nothing evaluates it.`
+          : `DRAINED: ${flag.key} has been silent ${flag.silentDays.toFixed(1)}d and has already cleared the evaluation gate; it is held only by ${flag.blockers.join('; ')}. A single stray evaluation restarts the ${ARCHIVE_GATES.noEvaluationDays}-day clock.`);
+      }
     } else if (sub === 'index') {
       const campaignFile = 'campaign.json';
       const previous = fs.existsSync(campaignFile) ? JSON.parse(fs.readFileSync(campaignFile, 'utf8')) : null;
@@ -217,6 +237,6 @@ try {
       for (const warning of report.warnings) console.log(`WARNING: ${warning}`);
       console.log('TIER | EVALUATORS | KEEP');
       for (const tier of budget.tiers || []) console.log(`${tier.name} | ${tier.containers} | ${tier.keep}`);
-    } else throw new Error('Usage: node demo.mjs scenario <list|plan|apply|compose|status|index|budget> [--to <step>] [--record <used>]');
+    } else throw new Error('Usage: node demo.mjs scenario <list|plan|apply|compose|status|evaluations|index|budget> [--to <step>] [--record <used>]');
   } else throw new Error('Usage: node demo.mjs <doctor|baseline|bootstrap|scenario|recreate|refresh|audit|destroy> [--confirm $LD_PROJECT_KEY]');
 } catch (error) { console.error(`Error: ${redact(error, secrets)}`); process.exitCode = 1; }

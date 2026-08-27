@@ -2049,6 +2049,48 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
     : [];
   return { step: step.id, checksum: compiled.checksum, created, adopted, updated, prepared, targeted, distribution: compiled.distribution };
 }
+// LaunchDarkly's archive gates are all clocks: the flag must be old enough, its targeting must have
+// been still for long enough, and it must have stopped being evaluated for long enough. Only the
+// last of those is expensive to fake, so it is the one the campaign spends real time accumulating.
+// The thresholds live here rather than in scenario data because they are the vendor's, not ours.
+export const ARCHIVE_GATES = { minimumFlagAgeDays: 30, quietTargetingDays: 7, noEvaluationDays: 7 };
+export function archiveReadiness(flag, now = new Date()) {
+  const days = (value) => (value ? (now.getTime() - new Date(value).getTime()) / DAY_MS : null);
+  const ageDays = days(flag.createdAt);
+  // A flag is only archivable when every critical environment has gone quiet, so the binding
+  // evidence is the most recent evaluation across them, never the oldest.
+  const requested = flag.environments.filter((row) => row.critical).map((row) => row.lastRequested).filter(Boolean);
+  const silentDays = requested.length ? Math.min(...requested.map((value) => days(value))) : (flag.environments.some((row) => row.critical) ? Infinity : null);
+  const blockers = [];
+  if (ageDays === null || ageDays < ARCHIVE_GATES.minimumFlagAgeDays) blockers.push(`age ${ageDays === null ? 'unknown' : ageDays.toFixed(1)}d of ${ARCHIVE_GATES.minimumFlagAgeDays}d`);
+  if (silentDays === null) blockers.push('no critical environment to measure');
+  else if (silentDays < ARCHIVE_GATES.noEvaluationDays) blockers.push(`evaluated ${silentDays.toFixed(1)}d ago, needs ${ARCHIVE_GATES.noEvaluationDays}d of silence`);
+  return { ageDays, silentDays, ready: blockers.length === 0, blockers };
+}
+// One call per environment covers every flag, so this is four requests for the whole catalog.
+export async function flagEvaluationStatus(fetcher, env, controls = {}) {
+  const settings = settingsFor(env); const t = tokensFor('scenario', env);
+  const requestControls = controls.request || {};
+  const now = controls.now ? new Date(controls.now) : new Date();
+  const catalog = await ld(fetcher, `/api/v2/flags/${settings.project}?limit=100`, t.LD_DEMO_TOKEN, undefined, requestControls);
+  const createdAt = new Map((catalog.items || []).map((item) => [item.key, item.creationDate ? new Date(item.creationDate).toISOString() : null]));
+  const byFlag = new Map();
+  for (const environment of ENVIRONMENTS) {
+    const statuses = await ld(fetcher, `/api/v2/flag-statuses/${settings.project}/${environment.key}`, t.LD_DEMO_TOKEN, undefined, requestControls);
+    for (const item of statuses.items || []) {
+      // The flag key is only in the parent link, not as a field of its own.
+      const key = String(item._links?.parent?.href || '').split('/').pop();
+      if (!key) continue;
+      if (!byFlag.has(key)) byFlag.set(key, []);
+      byFlag.get(key).push({ environment: environment.key, critical: environment.critical, state: item.name, lastRequested: item.lastRequested || null });
+    }
+  }
+  const flags = [...byFlag.entries()].map(([key, environments]) => {
+    const flag = { key, createdAt: createdAt.get(key) || null, environments: environments.sort((a, b) => a.environment.localeCompare(b.environment)) };
+    return { ...flag, ...archiveReadiness(flag, now) };
+  }).sort((a, b) => a.key.localeCompare(b.key));
+  return { checkedAt: now.toISOString(), flags, gates: ARCHIVE_GATES };
+}
 export async function scenarioStatus(fetcher, env, scenario, controls = {}) {
   const settings = settingsFor(env); const t = tokensFor('scenario', env);
   const requestControls = controls.request || {};

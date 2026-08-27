@@ -57,6 +57,12 @@
       "used": 3.8173744299999997,
       "containers": 4,
       "note": "live reading for 2026-08-26; four evaluators actually running"
+    },
+    {
+      "at": "2026-08-27T18:31:59.324Z",
+      "used": 3.8173744299999997,
+      "containers": 8,
+      "note": "live reading for 2026-08-27"
     }
   ],
   "tiers": [

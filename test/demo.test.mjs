@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor, targetingInstructions, warmRepositoryIndex, probeRepositoryIndex, connectionBudget, assertBudget, BUDGET_SEVERITY, generateCompose, composeServiceName, releaseTrees, materialiseReleases, featureBlocks, featureFunctionName } from '../lib.mjs';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor, targetingInstructions, warmRepositoryIndex, probeRepositoryIndex, connectionBudget, assertBudget, BUDGET_SEVERITY, archiveReadiness, ARCHIVE_GATES, generateCompose, composeServiceName, releaseTrees, materialiseReleases, featureBlocks, featureFunctionName } from '../lib.mjs';
 const catalogFile = JSON.parse(fs.readFileSync(new URL('../scenario/flags.json', import.meta.url), 'utf8'));
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
@@ -1068,4 +1068,42 @@ test('a prepared removal changes nothing on main and leaves the flag still evalu
   assert.deepEqual(orders.retired, [], 'nothing is retired until the pull request is merged');
   assert.deepEqual(orders.prepared, [gone]);
   assert.throws(() => compileScenario({ ...scenarioFiles, steps: [...scenarioFiles.steps, step] }), /not behaviour-style/);
+});
+
+// --- Archive readiness. Every gate is a clock, and the whole campaign exists to run them for real,
+// so the arithmetic that reads them is worth pinning down.
+const at = (days) => new Date(Date.parse('2026-09-20T12:00:00Z') - days * 86400000).toISOString();
+const now = new Date('2026-09-20T12:00:00Z');
+
+test('a flag is archivable only when it is old enough and every critical environment has gone quiet', () => {
+  const flag = (ageDays, production, staging) => ({
+    key: 'demo-x', createdAt: at(ageDays),
+    environments: [
+      { environment: 'production', critical: true, lastRequested: production === null ? null : at(production) },
+      { environment: 'staging', critical: true, lastRequested: staging === null ? null : at(staging) },
+      { environment: 'test', critical: false, lastRequested: at(0) }
+    ]
+  });
+  assert.equal(archiveReadiness(flag(40, 10, 9), now).ready, true);
+  // The binding evidence is the most recent evaluation across critical environments, never the
+  // oldest: one noisy environment keeps the flag alive however quiet the others are.
+  const oneNoisy = archiveReadiness(flag(40, 30, 1), now);
+  assert.equal(oneNoisy.ready, false);
+  assert.equal(oneNoisy.silentDays, 1);
+  assert.match(oneNoisy.blockers.join(' '), /needs 7d of silence/);
+  // A non-critical environment is evaluated constantly here and must not block anything.
+  assert.equal(archiveReadiness(flag(40, 8, 8), now).ready, true);
+  const young = archiveReadiness(flag(20, 10, 10), now);
+  assert.equal(young.ready, false);
+  assert.match(young.blockers.join(' '), /age 20\.0d of 30d/);
+  // Never evaluated is silence too, and the strongest kind.
+  const never = archiveReadiness(flag(40, null, null), now);
+  assert.equal(never.silentDays, Infinity);
+  assert.equal(never.ready, true);
+});
+
+test('archive gates match the vendor rules the campaign is accumulating evidence against', () => {
+  assert.deepEqual(ARCHIVE_GATES, { minimumFlagAgeDays: 30, quietTargetingDays: 7, noEvaluationDays: 7 });
+  const criticals = ENVIRONMENTS.filter((environment) => environment.critical).map((environment) => environment.key).sort();
+  assert.deepEqual(criticals, ['production', 'staging'], 'archiving is gated on critical environments only');
 });
