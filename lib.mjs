@@ -215,13 +215,38 @@ export async function waitForProjectAbsence(fetcher, token, settings, sleep = (m
   }
   throw new Error(`${label} failed: project still exists after 10 seconds.`);
 }
-function evaluatorSource(repository, flags, release = 'v001') {
+// Two source styles. "registry" lists flag keys in an array and is what every service has today.
+// "behaviour" puts each flag in its own named function with the key at a real call site, so a
+// removal pull request reads as a function and its registry entry disappearing. The shared body is
+// parameterised rather than duplicated: with registry substitutions it reproduces the original text
+// byte for byte, which a test asserts against the source of a live repository.
+function evaluatorSource(repository, flags, release = 'v001', options = {}) {
+  const behaviour = options.style === 'behaviour';
+  const blocks = behaviour ? featureBlocks(flags, options.descriptions || {}, options.retired || []) : null;
+  const declarations = behaviour
+    ? `${blocks.functions}
+
+// Every flag this release still owns, each at its own call site. Removing one deletes its function
+// and its entry here, and leaves a comment recording that the behaviour is now permanent.
+const features = [
+${blocks.registry}
+];
+${blocks.retired ? `${blocks.retired}
+` : ''}const flags = features.map((feature) => feature.key);`
+    : `const flags = ${JSON.stringify(flags)};`;
+  const evaluateOne = behaviour
+    ? "async function evaluateOne(client, feature, context) { return feature.evaluate(client, context); }"
+    : "async function evaluateOne(client, flag, context) { return client.boolVariation(flag, context, false); }";
+  const unit = behaviour ? 'feature' : 'flag';
+  const list = behaviour ? 'features' : 'flags';
+  const keyOf = behaviour ? 'feature.key' : 'flag';
+  const firstKey = behaviour ? 'features[0].key' : 'flags[0]';
   return `import * as LaunchDarkly from '@launchdarkly/node-server-sdk';
 import { batchSize, contextForOneShot, contextForTraffic, isLoadProbe, probeSummary, scheduledEvaluations } from './traffic.mjs';
 
 const repository = '${repository}';
 const release = '${release}';
-const flags = ${JSON.stringify(flags)};
+${declarations}
 const profiles = ['production', 'staging', 'test', 'dev'];
 const safeIdentifier = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const integer = (value, minimum, maximum, label) => {
@@ -276,13 +301,13 @@ function wait(ms) {
 async function flushOutcome(client) {
   try { await client.flush(); return 'ok'; } catch { return 'failed'; }
 }
-async function evaluateOne(client, flag, context) { return client.boolVariation(flag, context, false); }
+${evaluateOne}
 async function ordinaryBatch(client, options, firstIndex, openedAt) {
   const count = batchSize(options.profile, new Date()); let attempted = 0; const perFlag = {}; const clusters = {};
-  for (const flag of flags) perFlag[flag] = { true: 0, false: 0 };
+  for (const ${unit} of ${list}) perFlag[${keyOf}] = { true: 0, false: 0 };
   for (let item = 0; item < count && !stopRequested; item += 1) {
     const context = contextForTraffic(repository, options.profile, firstIndex + item, { generation: options.generation, contextPoolSize: options.contextPoolSize });
-    for (const flag of flags) { const value = await evaluateOne(client, flag, context); perFlag[flag][String(value)] += 1; attempted += 1; }
+    for (const ${unit} of ${list}) { const value = await evaluateOne(client, ${unit}, context); perFlag[${keyOf}][String(value)] += 1; attempted += 1; }
     clusters[context.cluster.key] = (clusters[context.cluster.key] || 0) + 1;
   }
   const flush = await flushOutcome(client);
@@ -295,14 +320,14 @@ async function probeTraffic(client, options) {
   const variations = { true: 0, false: 0 }; const clusters = {};
   const emit = async (final = false) => {
     const elapsedMs = Math.max(1, Date.now() - started); const flush = await flushOutcome(client);
-    console.log(JSON.stringify(probeSummary({ repository, flag: flags[0], generation: options.generation, requestedRate: options.evaluationsPerHour, attempted, elapsedMs, variations, clusters, contextPoolSize: options.contextPoolSize, errors, sdkWarnings, sdkErrors, droppedEventWarnings, flush, final })));
+    console.log(JSON.stringify(probeSummary({ repository, flag: ${firstKey}, generation: options.generation, requestedRate: options.evaluationsPerHour, attempted, elapsedMs, variations, clusters, contextPoolSize: options.contextPoolSize, errors, sdkWarnings, sdkErrors, droppedEventWarnings, flush, final })));
     if (flush !== 'ok') throw new Error('SDK flush failed.');
   };
   while (!stopRequested) {
     const elapsedMs = Date.now() - started; const target = scheduledEvaluations(options.evaluationsPerHour, elapsedMs);
     while (attempted < target && !stopRequested) {
       const context = contextForTraffic(repository, options.profile, attempted, { generation: options.generation, contextPoolSize: options.contextPoolSize });
-      try { const value = await evaluateOne(client, flags[0], context); variations[String(value)] += 1; } catch { errors += 1; }
+      try { const value = await evaluateOne(client, ${list}[0], context); variations[String(value)] += 1; } catch { errors += 1; }
       clusters[context.cluster.key] = (clusters[context.cluster.key] || 0) + 1; attempted += 1;
     }
     const now = Date.now();
@@ -480,13 +505,13 @@ async function ${name}(client, context) {
 }`;
   }).join('\n\n');
   const registry = live.map((key) => `  { key: '${key}', evaluate: ${featureFunctionName(key)} }`).join(',\n');
-  const retired = [...gone].map((key) => `// Permanently enabled, flag removed: ${key} (${descriptions[key] || 'behaviour change'}).`).join('\n');
+  const retired = [...gone].map((key) => `// Permanently enabled, flag removed: ${key} (${(descriptions[key] || 'behaviour change').replace(/[.]$/, '')}).`).join('\n');
   return { functions, registry, retired, live };
 }
-function repositoryFiles(repository, flags, release = 'v001', topology = DEFAULT_CLUSTER_TOPOLOGY) {
+function repositoryFiles(repository, flags, release = 'v001', topology = DEFAULT_CLUSTER_TOPOLOGY, options = {}) {
   return [
     { path: 'package.json', content: `${JSON.stringify({ name: repository, private: true, type: 'module', scripts: { evaluate: 'node app.mjs', traffic: 'node app.mjs --traffic' }, dependencies: { '@launchdarkly/node-server-sdk': '^9.0.0' } }, null, 2)}\n` },
-    { path: 'app.mjs', content: evaluatorSource(repository, flags, release) },
+    { path: 'app.mjs', content: evaluatorSource(repository, flags, release, options) },
     { path: 'traffic.mjs', content: trafficSource(topology) },
     { path: 'Dockerfile', content: "FROM node:24-alpine\nENV NPM_CONFIG_UPDATE_NOTIFIER=false\nWORKDIR /app\nCOPY package.json ./\nRUN npm install --omit=dev\nCOPY app.mjs traffic.mjs ./\nUSER node\nCMD [\"npm\", \"run\", \"traffic\"]\n" },
     { path: '.gitignore', content: 'node_modules/\n.env\n' },
@@ -1368,6 +1393,10 @@ export function assertServices(services, catalog, sandbox) {
     if (keys.has(service.key)) throw new Error(`Duplicate service key: ${service.key}`);
     keys.add(service.key);
     if (!TEMPLATES.includes(service.template)) throw new Error(`Service ${service.key} declares an unknown template.`);
+    // A service that will receive a removal pull request declares behaviour style, so the diff
+    // reads as a function disappearing rather than a string leaving an array.
+    if (service.sourceStyle !== undefined && !['registry', 'behaviour'].includes(service.sourceStyle)) throw new Error(`Service ${service.key} declares an unknown source style ${String(service.sourceStyle)}.`);
+    if (service.sourceStyle === 'behaviour' && service.template !== 'nodejs') throw new Error(`Service ${service.key} asks for behaviour-style source, which the ${service.template} template does not implement yet.`);
     if (!Number.isInteger(service.wave) || service.wave < 1) throw new Error(`Service ${service.key} declares an invalid wave.`);
     if (!Array.isArray(service.flags)) throw new Error(`Service ${service.key} must declare a flags array.`);
     for (const key of service.flags) {
@@ -1398,7 +1427,7 @@ export function compileScenario({ sandbox, services, catalog, steps, budget }, c
   const introduced = new Map();
   for (const service of services.services) {
     if (service.cohort !== 'pre-campaign') continue;
-    introduced.set(service.key, { key: service.key, template: service.template, references: [...(PRE_CAMPAIGN_REFERENCES[service.key] || [])], tag: null, introducedBy: 'pre-campaign' });
+    introduced.set(service.key, { key: service.key, template: service.template, style: service.sourceStyle || 'registry', references: [...(PRE_CAMPAIGN_REFERENCES[service.key] || [])], retired: [], tag: null, introducedBy: 'pre-campaign' });
   }
   const catalogKeys = new Set(catalog.flags.map((flag) => flag.key));
   const targeting = new Map();
@@ -1421,7 +1450,7 @@ export function compileScenario({ sandbox, services, catalog, steps, budget }, c
       const service = byKey.get(key);
       if (!service) throw new Error(`Step ${step.id} introduces unknown service ${key}.`);
       if (introduced.has(key)) throw new Error(`Step ${step.id} re-introduces ${key}, which already exists. Resources are never recreated.`);
-      introduced.set(key, { key, template: service.template, references: [], tag: null, introducedBy: step.id });
+      introduced.set(key, { key, template: service.template, style: service.sourceStyle || 'registry', references: [], retired: [], tag: null, introducedBy: step.id });
     }
     for (const key of step.updateServices || []) {
       if (!introduced.has(key)) throw new Error(`Step ${step.id} updates ${key}, which is not introduced yet.`);
@@ -1431,7 +1460,29 @@ export function compileScenario({ sandbox, services, catalog, steps, budget }, c
       if (!target) throw new Error(`Step ${step.id} adds source references to ${key}, which is not introduced yet.`);
       const declared = new Set(byKey.get(key).flags || []);
       for (const flag of references) if (!declared.has(flag)) throw new Error(`Step ${step.id} references ${flag} in ${key}, which does not declare it as a consumer.`);
+      // Re-adding a reference an earlier release removed would resurrect debt the campaign has
+      // spent real evidence retiring, and would contradict the archive claim the talk makes.
+      for (const flag of references) if (target.retired.includes(flag)) throw new Error(`Step ${step.id} re-references ${flag} in ${key}, which an earlier release removed. Removals are forward-only.`);
       target.references = [...new Set([...target.references, ...references])].sort();
+    }
+    // A prepared removal is a pull request left open on purpose. It changes nothing here: the
+    // references stay, the flag keeps being evaluated, and merging it is a live act at the talk.
+    for (const [key, removals] of Object.entries(step.prepareRemoval || {})) {
+      const target = introduced.get(key);
+      if (!target) throw new Error(`Step ${step.id} prepares a removal for ${key}, which is not introduced yet.`);
+      if (target.style !== 'behaviour') throw new Error(`Step ${step.id} prepares a removal for ${key}, whose source is not behaviour-style; the removal diff would be unreadable.`);
+      for (const flag of removals) if (!target.references.includes(flag)) throw new Error(`Step ${step.id} prepares removal of ${flag} from ${key}, which does not reference it.`);
+      target.prepared = [...new Set([...(target.prepared || []), ...removals])].sort();
+    }
+    for (const [key, removals] of Object.entries(step.removeReferences || {})) {
+      const target = introduced.get(key);
+      if (!target) throw new Error(`Step ${step.id} removes source references from ${key}, which is not introduced yet.`);
+      if (target.style !== 'behaviour') throw new Error(`Step ${step.id} removes a reference from ${key}, whose source is not behaviour-style; the removal diff would be unreadable.`);
+      for (const flag of removals) {
+        if (!target.references.includes(flag)) throw new Error(`Step ${step.id} removes ${flag} from ${key}, which does not reference it.`);
+        target.references = target.references.filter((item) => item !== flag);
+        target.retired = [...target.retired, flag].sort();
+      }
     }
     for (const [key, tag] of Object.entries(step.releaseTags || {})) {
       const target = introduced.get(key);
@@ -1791,16 +1842,17 @@ export async function applyTargeting(fetcher, token, settings, entries, controls
   return applied;
 }
 export const OWNERSHIP_MARKER = '.scenario-owner.json';
-export function catalogSource(serviceKey, flags, scenarioId, template = 'nodejs', release = 'v001', topology = DEFAULT_CLUSTER_TOPOLOGY, org = 'demo-org') {
+export function catalogSource(serviceKey, flags, scenarioId, template = 'nodejs', release = 'v001', topology = DEFAULT_CLUSTER_TOPOLOGY, org = 'demo-org', options = {}) {
+  if (options.style === 'behaviour' && template !== 'nodejs') throw new Error(`Service ${serviceKey} asks for behaviour-style source, which the ${template} template does not implement yet.`);
   const builders = {
-    nodejs: () => repositoryFiles(serviceKey, flags, release, topology),
+    nodejs: () => repositoryFiles(serviceKey, flags, release, topology, options),
     typescript: () => typescriptFiles(serviceKey, flags, release, topology),
     go: () => goFiles(serviceKey, flags, release, topology, org),
     python: () => pythonFiles(serviceKey, flags, release, topology)
   };
   if (!builders[template]) throw new Error(`Source template "${template}" is not implemented.`);
   const files = builders[template]();
-  files.push({ path: OWNERSHIP_MARKER, content: `${JSON.stringify({ scenarioId, service: serviceKey, template, release }, null, 2)}\n` });
+  files.push({ path: OWNERSHIP_MARKER, content: `${JSON.stringify({ scenarioId, service: serviceKey, template, release, ...(options.style ? { style: options.style } : {}), ...(options.retired?.length ? { retired: options.retired } : {}) }, null, 2)}\n` });
   return { files, date: null };
 }
 export async function repositoryIfPresent(fetcher, token, settings, name, controls) {
@@ -1852,6 +1904,10 @@ async function mergeSourceViaPullRequest(fetcher, token, settings, name, source,
     if (!pull) throw error;
   }
   if (!Number.isInteger(pull?.number)) throw new Error(`Opening a pull request on ${name} did not return a pull number.`);
+  // A prepared pull request stops here, open and reviewable. Nothing on main changes, so the flag
+  // keeps being evaluated until someone merges it — which is the point: the merge is the live
+  // moment the talk demonstrates, not something a scenario step quietly did days earlier.
+  if (meta.prepareOnly) return { commitSha: commit.sha, parentSha, pullNumber: pull.number, prepared: true, branch, url: pull.html_url ?? null };
   let merged; let mergeError;
   // "Base branch was modified" is GitHub reporting its own view of main as momentarily stale right
   // after the branch was created. It resolves on its own, so retry briefly rather than failing the step.
@@ -1869,7 +1925,7 @@ async function mergeSourceViaPullRequest(fetcher, token, settings, name, source,
   if (mergeError) throw new Error(`Squash-merging ${name}#${pull.number} failed: ${mergeError.message}. The step stops here; it never falls back to committing directly to main.`);
   if (!merged?.merged || !merged.sha) throw new Error(`Pull request ${name}#${pull.number} did not report a completed squash merge.`);
   await gh(fetcher, `/repos/${settings.org}/${name}/git/refs/heads/${branch}`, token, { method: 'DELETE' }, controls);
-  return { commitSha: merged.sha, parentSha, pullNumber: pull.number };
+  return { commitSha: merged.sha, parentSha, pullNumber: pull.number, prepared: false };
 }
 export function stepsThrough(steps, targetId) {
   const index = steps.findIndex((step) => step.id === targetId);
@@ -1883,10 +1939,17 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
   const step = through.at(-1);
   const compiled = compileScenario({ ...scenario, steps: through });
   const byKey = new Map(scenario.services.services.map((service) => [service.key, service]));
-  const created = []; const adopted = [];
+  const descriptions = Object.fromEntries((scenario.catalog?.flags || []).map((flag) => [flag.key, flag.description]));
+  const compiledByKey = new Map(compiled.services.map((service) => [service.key, service]));
+  const sourceOptionsFor = (key) => {
+    const service = compiledByKey.get(key);
+    return { style: service?.style || 'registry', retired: service?.retired || [], descriptions };
+  };
+  const created = []; const adopted = []; const prepared = [];
   const introduce = step.introduceServices || [];
   const update = step.updateServices || [];
-  const total = introduce.length + update.length; let completed = 0;
+  const prepare = Object.entries(step.prepareRemoval || {});
+  const total = introduce.length + update.length + prepare.length; let completed = 0;
   for (const key of introduce) {
     const service = byKey.get(key);
     if (!service) throw new Error(`Refusing a repository outside the service catalog: ${key}`);
@@ -1899,7 +1962,7 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
       adopted.push({ service: key, repositoryId: existing.id ?? null, nodeId: existing.node_id ?? null });
     } else {
       const references = (step.sourceReferences || {})[key] || [];
-      const source = catalogSource(key, references, compiled.scenarioId, service.template, (step.releaseTags || {})[key] || "v001", clusterTopologyFor(scenario.sandbox.environments), settings.org);
+      const source = catalogSource(key, references, compiled.scenarioId, service.template, (step.releaseTags || {})[key] || "v001", clusterTopologyFor(scenario.sandbox.environments), settings.org, sourceOptionsFor(key));
       const result = await commitInitialSource(fetcher, t.GH_RESET_TOKEN, settings, key, source, requestControls);
       const version = (step.releaseTags || {})[key];
       const tag = version ? `${key}-${version}` : null;
@@ -1932,7 +1995,7 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
     if (already) {
       updated.push({ service: key, tag, commitSha: already.object?.sha ?? null, alreadyApplied: true });
     } else {
-      const source = catalogSource(key, references, compiled.scenarioId, service.template, version, clusterTopologyFor(scenario.sandbox.environments), settings.org);
+      const source = catalogSource(key, references, compiled.scenarioId, service.template, version, clusterTopologyFor(scenario.sandbox.environments), settings.org, sourceOptionsFor(key));
       const title = `${step.id}: advance ${key} to ${version}`;
       const body = [
         step.title || '',
@@ -1949,13 +2012,42 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
     completed += 1;
     if (controls.onProgress) await controls.onProgress({ completed, total, label: `${already ? 'Already at' : 'Fast-forwarded'} ${key} ${version}` });
   }
+  // Prepared removals last: they branch from a main that this step may just have advanced.
+  for (const [key, removals] of prepare) {
+    const service = byKey.get(key);
+    if (!service) throw new Error(`Refusing a repository outside the service catalog: ${key}`);
+    const marker = await readOwnershipMarker(fetcher, t.GH_RESET_TOKEN, settings, key, requestControls);
+    if (!marker || marker.scenarioId !== compiled.scenarioId || marker.service !== key) throw new Error(`Repository ${settings.org}/${key} does not carry this scenario's ownership marker; refusing to open a pull request against it.`);
+    const options = sourceOptionsFor(key);
+    const references = (compiledByKey.get(key)?.references || []).filter((flag) => !removals.includes(flag));
+    // The release string is left as it stands on main so the only diff is the flag removal.
+    const source = catalogSource(key, references, compiled.scenarioId, service.template, marker.release, clusterTopologyFor(scenario.sandbox.environments), settings.org, { ...options, retired: [...new Set([...options.retired, ...removals])].sort() });
+    const title = `Remove ${removals.join(', ')} from ${key}`;
+    const body = [
+      `The rollout finished some time ago and the behaviour is now permanent, so the flag no longer decides anything.`,
+      '',
+      `Flags removed by this pull request: ${removals.join(', ')}.`,
+      `Flags this service still evaluates: ${references.join(', ') || 'none'}.`,
+      '',
+      'Archiving is gated on evidence, not on this merge: the flag must be old enough, its targeting',
+      'must have been still for long enough, and it must have stopped being evaluated for long enough.',
+      'Merging this removes the code reference. The evaluations stop cluster by cluster as each one',
+      'redeploys, and only then does the no-evaluations clock start.',
+      '',
+      'Generated by the scenario reconciler. Synthetic content; no production system is involved.'
+    ].join('\n');
+    const result = await mergeSourceViaPullRequest(fetcher, t.GH_RESET_TOKEN, settings, key, source, { branch: `scenario/${step.id}-remove-${key}`, title, body, prepareOnly: true }, requestControls);
+    prepared.push({ service: key, removals, references, ...result });
+    completed += 1;
+    if (controls.onProgress) await controls.onProgress({ completed, total, label: `Prepared removal pull request ${key}#${result.pullNumber} (not merged)` });
+  }
   const targeted = (step.targeting || []).length
     ? await applyTargeting(fetcher, t.LD_RESET_TOKEN, settings, step.targeting, {
         request: requestControls,
         onTargeting: (entry) => controls.onProgress?.({ completed: total, total: total || 1, label: `Targeting ${entry.flag} in ${entry.environment}: ${entry.state}, serving ${entry.serve}${entry.clusters.length ? `, clusters ${entry.clusters.join(', ')}` : ''}` })
       })
     : [];
-  return { step: step.id, checksum: compiled.checksum, created, adopted, updated, targeted, distribution: compiled.distribution };
+  return { step: step.id, checksum: compiled.checksum, created, adopted, updated, prepared, targeted, distribution: compiled.distribution };
 }
 export async function scenarioStatus(fetcher, env, scenario, controls = {}) {
   const settings = settingsFor(env); const t = tokensFor('scenario', env);

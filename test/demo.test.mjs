@@ -998,3 +998,74 @@ test('a model with no pinned release needs no worktree and touches no git comman
   assert.deepEqual(result.materialised, []);
   assert.deepEqual(calls, [], 'the current campaign must keep building from the default branch exactly as before');
 });
+
+// --- Removal releases. The point of behaviour-style source is that a removal reads as a function
+// disappearing, so these tests check the shape of the diff, not only that a key is gone.
+const flagDescriptions = () => Object.fromEntries(scenarioFiles.catalog.flags.map((flag) => [flag.key, flag.description]));
+const ordersReferences = () => compileScenario(scenarioFiles).services.find((item) => item.key === 'demo-orders').references;
+const appSource = (source) => source.files.find((file) => file.path === 'app.mjs').content;
+
+test('registry-style source is unchanged, byte for byte, by the introduction of a second style', () => {
+  const live = fs.readFileSync(new URL('../runtime/repos/demo-orders/app.mjs', import.meta.url), 'utf8');
+  const marker = JSON.parse(fs.readFileSync(new URL('../runtime/repos/demo-orders/.scenario-owner.json', import.meta.url), 'utf8'));
+  const model = compileScenario(scenarioFiles);
+  const built = catalogSource('demo-orders', ordersReferences(), model.scenarioId, 'nodejs', marker.release);
+  assert.equal(appSource(built), live, 'the campaign is live; the default style must not shift under it');
+});
+
+test('behaviour-style source puts every flag key at its own call site and drops a removed one cleanly', () => {
+  const model = compileScenario(scenarioFiles);
+  const references = ordersReferences();
+  const gone = 'demo-email-notifications-v2';
+  const options = { style: 'behaviour', descriptions: flagDescriptions() };
+  const before = appSource(catalogSource('demo-orders', references, model.scenarioId, 'nodejs', 'v003', undefined, 'org', options));
+  const after = appSource(catalogSource('demo-orders', references.filter((key) => key !== gone), model.scenarioId, 'nodejs', 'v003', undefined, 'org', { ...options, retired: [gone] }));
+  for (const key of references) assert.ok(before.includes(`boolVariation('${key}'`), `${key} must appear at a call site, not only in a list`);
+  assert.ok(before.includes(`async function ${featureFunctionName(gone)}(client, context)`));
+  // The removal deletes the function and its registry entry and adds one comment. Anything else in
+  // the diff would be noise on a slide.
+  assert.equal(after.includes(`boolVariation('${gone}'`), false, 'the removed flag must leave every call site');
+  assert.equal(after.includes(`evaluate: ${featureFunctionName(gone)}`), false);
+  assert.match(after, new RegExp(`^// Permanently enabled, flag removed: ${gone} \(.*[^.]\)\.$`, 'm'));
+  const removedLines = before.split('\n').filter((line) => !after.split('\n').includes(line));
+  assert.ok(removedLines.every((line) => line.includes(gone) || line.trim() === '' || line.includes(featureFunctionName(gone))), `only the removed flag may leave the file, saw: ${removedLines.join(' | ')}`);
+  for (const key of references.filter((item) => item !== gone)) assert.ok(after.includes(`boolVariation('${key}'`), `${key} must survive the removal`);
+});
+
+test('behaviour style is refused for templates that do not implement it', () => {
+  const model = compileScenario(scenarioFiles);
+  assert.throws(() => catalogSource('demo-notifications', ['demo-sms-notifications'], model.scenarioId, 'typescript', 'v001', undefined, 'org', { style: 'behaviour' }), /does not implement yet/);
+  const services = { ...scenarioFiles.services, services: scenarioFiles.services.services.map((service) => service.key === 'demo-notifications' ? { ...service, sourceStyle: 'behaviour' } : service) };
+  assert.throws(() => assertServices(services, scenarioFiles.catalog, scenarioFiles.sandbox), /does not implement yet/);
+  const unknown = { ...scenarioFiles.services, services: scenarioFiles.services.services.map((service) => service.key === 'demo-orders' ? { ...service, sourceStyle: 'inline' } : service) };
+  assert.throws(() => assertServices(unknown, scenarioFiles.catalog, scenarioFiles.sandbox), /unknown source style/);
+});
+
+test('a removal is forward-only and only a behaviour-style service can take one', () => {
+  const behaviourOrders = { ...scenarioFiles, services: { ...scenarioFiles.services, services: scenarioFiles.services.services.map((service) => service.key === 'demo-orders' ? { ...service, sourceStyle: 'behaviour' } : service) } };
+  const step = (extra) => ({ schemaVersion: 1, id: 's901', title: 'synthetic removal', recommendedDate: '2099-01-02', cadence: 'daily', transition: 'production-expansion', ...extra });
+  const gone = 'demo-email-notifications-v2';
+  // Registry-style source refuses the removal rather than producing an unreadable diff.
+  assert.throws(() => compileScenario({ ...scenarioFiles, steps: [...scenarioFiles.steps, step({ removeReferences: { 'demo-orders': [gone] } })] }), /not behaviour-style/);
+  const removed = compileScenario({ ...behaviourOrders, steps: [...behaviourOrders.steps, step({ removeReferences: { 'demo-orders': [gone] } })] });
+  const orders = removed.services.find((item) => item.key === 'demo-orders');
+  assert.equal(orders.references.includes(gone), false);
+  assert.deepEqual(orders.retired, [gone]);
+  // Removing what is not referenced, and re-adding what was removed, are both refused.
+  assert.throws(() => compileScenario({ ...behaviourOrders, steps: [...behaviourOrders.steps, step({ removeReferences: { 'demo-orders': ['demo-fraud-screening'] } })] }), /does not reference it/);
+  assert.throws(() => compileScenario({ ...behaviourOrders, steps: [...behaviourOrders.steps,
+    step({ removeReferences: { 'demo-orders': [gone] } }),
+    { ...step({ sourceReferences: { 'demo-orders': [gone] } }), id: 's902', recommendedDate: '2099-01-03' }] }), /Removals are forward-only/);
+});
+
+test('a prepared removal changes nothing on main and leaves the flag still evaluated', () => {
+  const behaviourOrders = { ...scenarioFiles, services: { ...scenarioFiles.services, services: scenarioFiles.services.services.map((service) => service.key === 'demo-orders' ? { ...service, sourceStyle: 'behaviour' } : service) } };
+  const gone = 'demo-email-notifications-v2';
+  const step = { schemaVersion: 1, id: 's903', title: 'prepare removal', recommendedDate: '2099-01-04', cadence: 'daily', transition: 'production-expansion', prepareRemoval: { 'demo-orders': [gone] } };
+  const model = compileScenario({ ...behaviourOrders, steps: [...behaviourOrders.steps, step] });
+  const orders = model.services.find((item) => item.key === 'demo-orders');
+  assert.ok(orders.references.includes(gone), 'an unmerged pull request must not stop the evaluations');
+  assert.deepEqual(orders.retired, [], 'nothing is retired until the pull request is merged');
+  assert.deepEqual(orders.prepared, [gone]);
+  assert.throws(() => compileScenario({ ...scenarioFiles, steps: [...scenarioFiles.steps, step] }), /not behaviour-style/);
+});

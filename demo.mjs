@@ -101,6 +101,8 @@ try {
       console.log(`Recommended ${step.recommendedDate} | cadence ${step.cadence} | checksum ${compiled.checksum}`);
       console.log(`Repositories introduced by this step: ${(step.introduceServices || []).join(', ') || 'none'}`);
       for (const [key, references] of Object.entries(step.sourceReferences || {})) console.log(`  ${key} references ${references.join(', ')}`);
+      for (const [key, removals] of Object.entries(step.removeReferences || {})) console.log(`  ${key} removes ${removals.join(', ')} from its source, merged by this step`);
+      for (const [key, removals] of Object.entries(step.prepareRemoval || {})) console.log(`  ${key} gets an OPEN pull request removing ${removals.join(', ')}; nothing on main changes until it is merged`);
       for (const [key, version] of Object.entries(step.releaseTags || {})) console.log(`  ${key} tag ${key}-${version}`);
       console.log(`Deployment tuples after this step: ${compiled.deployments.length} of maximum ${scenario.sandbox.limits.maxEvaluatorContainers}`);
       for (const tuple of compiled.deployments) console.log(`  ${tuple.service}/${tuple.environment} ${tuple.traffic}`);
@@ -118,6 +120,11 @@ try {
       console.log(`Applied ${result.step} | checksum ${result.checksum}`);
       console.log(`Created ${result.created.length} repository(ies); adopted ${result.adopted.length}. Nothing was deleted or recreated.`);
       for (const item of result.created) console.log(`  ${item.service} | commit ${item.commitSha} | tag ${item.tag} | references ${item.references.join(', ')}`);
+      if (result.prepared?.length) {
+        console.log(`Prepared ${result.prepared.length} removal pull request(s), left open on purpose:`);
+        for (const item of result.prepared) console.log(`  ${item.service}#${item.pullNumber} removes ${item.removals.join(', ')} | ${item.url || `branch ${item.branch}`}`);
+        console.log('These are not merged. The flags keep being evaluated until someone merges them.');
+      }
       const state = readState();
       state.appliedSteps = [...state.appliedSteps.filter((item) => item.id !== result.step), { id: result.step, checksum: result.checksum, appliedAt: new Date().toISOString(), created: result.created.map((item) => ({ service: item.service, repositoryId: item.repositoryId, commitSha: item.commitSha, tag: item.tag, firstPushAt: item.firstPushAt })) }];
       fs.writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
