@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "id": "s027",
-  "title": "Second cluster stops evaluating demo-legacy-profile",
-  "recommendedDate": "2026-09-07",
+  "id": "s028",
+  "title": "Merge the removal; the canary cluster stops evaluating demo-legacy-profile",
+  "recommendedDate": "2026-09-05",
   "cadence": "three-day",
   "transition": "production-expansion",
   "minGapDaysFromPrevious": 0,
@@ -55,7 +55,7 @@
       "service": "demo-profile",
       "environment": "production",
       "cluster": "prod-sa-east-02",
-      "release": "v005",
+      "release": "v004",
       "traffic": "business-hours-production"
     },
     {
@@ -80,8 +80,20 @@
       "traffic": "business-hours-production"
     }
   ],
+  "updateServices": [
+    "demo-profile"
+  ],
+  "releaseTags": {
+    "demo-profile": "v005"
+  },
+  "removeReferences": {
+    "demo-profile": [
+      "demo-legacy-profile"
+    ]
+  },
   "notes": [
-    "One more cluster redeploys onto v005. 2 of 5 Production clusters have now stopped evaluating demo-legacy-profile.",
-    "Each pinned evaluator generates the same batch volume, so the fall is even rather than weighted by cluster size. Worth saying out loud, because the chart will be read as traffic and it is really deployments."
+    "The prepared pull request is merged and tagged v005. Main no longer references demo-legacy-profile.",
+    "Only the canary cluster redeploys onto it. The other four stay on v004 and keep evaluating the flag, which is what a staged rollout of a code removal actually looks like.",
+    "The no-evaluations clock does not start here. It starts when the last cluster stops, and any cluster left behind on v004 keeps resetting it."
   ]
 }

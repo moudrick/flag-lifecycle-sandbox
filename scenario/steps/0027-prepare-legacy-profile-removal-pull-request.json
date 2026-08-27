@@ -1,13 +1,18 @@
 {
   "schemaVersion": 1,
-  "id": "s024",
-  "title": "demo-profile moves to behaviour-style source and pins one evaluator per Production cluster",
-  "recommendedDate": "2026-09-01",
-  "cadence": "daily",
+  "id": "s027",
+  "title": "Open the pull request that removes demo-legacy-profile, and leave it open",
+  "recommendedDate": "2026-09-03",
+  "cadence": "three-day",
   "transition": "production-expansion",
   "minGapDaysFromPrevious": 0,
   "gates": [],
   "targeting": [],
+  "prepareRemoval": {
+    "demo-profile": [
+      "demo-legacy-profile"
+    ]
+  },
   "deploy": [
     {
       "service": "demo-orders",
@@ -80,17 +85,9 @@
       "traffic": "business-hours-production"
     }
   ],
-  "updateServices": [
-    "demo-profile"
-  ],
-  "releaseTags": {
-    "demo-profile": "v004"
-  },
   "notes": [
-    "Two changes in one release because they have to land together: demo-profile switches to behaviour-style source, where every flag sits in its own named function at a real call site, and its single Production evaluator is replaced by one per cluster.",
-    "Behaviour style is what makes the removal pull request readable. A flag leaving an array is one line of noise; a flag leaving this source deletes a function, deletes a registry line, and adds a comment recording that the behaviour is now permanent.",
-    "Cluster pinning is what makes the drain visible. Five evaluators each pinned to one Production cluster can run different release tags at the same time, so a code removal rolled out cluster by cluster shows up as steps rather than as a cliff.",
-    "Evaluators go from eight to twelve. Dated 1 September on purpose: the metered month resets first, so this spends a fresh budget rather than the last quarter of August. Re-measure after a full day before going further.",
-    "demo-legacy-profile is the subject because demo-profile is its only consumer. A flag with a second live caller can never reach zero evaluations, which is the trap this whole talk is about; here the drain can actually complete."
+    "The pull request is opened and deliberately not merged. Nothing on main changes, the flag keeps being evaluated by every cluster, and the archive gates stay exactly where they were.",
+    "It exists to be looked at: a real diff, on a real repository, removing a real flag reference, sitting open for two days before anyone merges it.",
+    "Merging is a separate act on a separate date, because the gap between opening a removal and its evaluations actually stopping is the thing the talk is about."
   ]
 }

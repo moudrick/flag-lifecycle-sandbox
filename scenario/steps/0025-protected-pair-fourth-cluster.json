@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "s025",
+  "title": "Protected pair takes its fourth cluster",
+  "recommendedDate": "2026-08-31",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "targeting": [
+    {
+      "flag": "demo-express-returns",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02",
+        "prod-emea-central-04"
+      ]
+    },
+    {
+      "flag": "demo-profile-preferences",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02",
+        "prod-emea-central-04"
+      ]
+    },
+    {
+      "flag": "demo-identity-passkeys",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02",
+        "prod-emea-central-04"
+      ]
+    },
+    {
+      "flag": "demo-recommendation-model-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02",
+        "prod-emea-central-04"
+      ]
+    }
+  ],
+  "notes": [
+    "Fourth of five clusters, sixty per cent. One cluster left.",
+    "Still targeting only. The metered month ends within a day or two of this step, so nothing here spends against a nearly exhausted budget."
+  ]
+}

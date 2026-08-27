@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "id": "s026",
+  "title": "Protected pair reaches full Production; demo-profile pins one evaluator per cluster",
+  "recommendedDate": "2026-09-01",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "targeting": [
+    {
+      "flag": "demo-express-returns",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02",
+        "prod-emea-central-04",
+        "prod-eu-west-01"
+      ]
+    },
+    {
+      "flag": "demo-profile-preferences",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02",
+        "prod-emea-central-04",
+        "prod-eu-west-01"
+      ]
+    },
+    {
+      "flag": "demo-identity-passkeys",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02",
+        "prod-emea-central-04",
+        "prod-eu-west-01"
+      ]
+    },
+    {
+      "flag": "demo-recommendation-model-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02",
+        "prod-emea-central-04",
+        "prod-eu-west-01"
+      ]
+    }
+  ],
+  "updateServices": [
+    "demo-profile"
+  ],
+  "releaseTags": {
+    "demo-profile": "v004"
+  },
+  "deploy": [
+    {
+      "service": "demo-orders",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-orders",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-storefront",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-checkout",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-catalog",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-notifications",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-shipping",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "production",
+      "cluster": "prod-eu-west-02",
+      "release": "v004",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "production",
+      "cluster": "prod-sa-east-02",
+      "release": "v004",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "production",
+      "cluster": "prod-us-east-02",
+      "release": "v004",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "production",
+      "cluster": "prod-emea-central-04",
+      "release": "v004",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "production",
+      "cluster": "prod-eu-west-01",
+      "release": "v004",
+      "traffic": "business-hours-production"
+    }
+  ],
+  "notes": [
+    "The protected pair completes Production. From today their targeting must stay still for seven days, so the no-targeting-changes gate opens around 8 September.",
+    "In the same step demo-profile switches to behaviour-style source, where every flag sits in its own named function at a real call site, and its single Production evaluator becomes one per cluster.",
+    "Behaviour style is what makes the removal pull request readable. A flag leaving an array is a line of noise; a flag leaving this source deletes a function, deletes a registry line, and adds a comment recording that the behaviour is now permanent.",
+    "Cluster pinning is what makes the drain visible. Five evaluators each pinned to one Production cluster can run different release tags simultaneously, so a code removal rolled out cluster by cluster appears as steps rather than as a cliff.",
+    "Evaluators go from eight to twelve. Dated 1 September on purpose: the metered month resets first, so this spends a fresh budget rather than the last quarter of August. Re-measure after a full day at twelve before going further.",
+    "demo-legacy-profile is the drain subject because demo-profile is its only deployed caller. Ten of the twenty-four flags have more than one, and none of those can reach zero evaluations until every caller is dealt with."
+  ]
+}

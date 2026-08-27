@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "id": "s029",
-  "title": "Fourth cluster stops evaluating demo-legacy-profile",
-  "recommendedDate": "2026-09-11",
+  "id": "s030",
+  "title": "Third cluster stops evaluating demo-legacy-profile",
+  "recommendedDate": "2026-09-09",
   "cadence": "three-day",
   "transition": "production-expansion",
   "minGapDaysFromPrevious": 0,
@@ -69,7 +69,7 @@
       "service": "demo-profile",
       "environment": "production",
       "cluster": "prod-emea-central-04",
-      "release": "v005",
+      "release": "v004",
       "traffic": "business-hours-production"
     },
     {
@@ -81,7 +81,7 @@
     }
   ],
   "notes": [
-    "One more cluster redeploys onto v005. 4 of 5 Production clusters have now stopped evaluating demo-legacy-profile.",
+    "One more cluster redeploys onto v005. 3 of 5 Production clusters have now stopped evaluating demo-legacy-profile.",
     "Each pinned evaluator generates the same batch volume, so the fall is even rather than weighted by cluster size. Worth saying out loud, because the chart will be read as traffic and it is really deployments."
   ]
 }
