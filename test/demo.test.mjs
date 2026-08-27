@@ -1062,8 +1062,13 @@ test('a removal is forward-only and only a behaviour-style service can take one'
   const behaviourOrders = { ...scenarioFiles, services: { ...scenarioFiles.services, services: scenarioFiles.services.services.map((service) => service.key === 'demo-orders' ? { ...service, sourceStyle: 'behaviour' } : service) } };
   const step = (extra) => ({ schemaVersion: 1, id: 's901', title: 'synthetic removal', recommendedDate: '2099-01-02', cadence: 'daily', transition: 'production-expansion', ...extra });
   const gone = 'demo-email-notifications-v2';
-  // Registry-style source refuses the removal rather than producing an unreadable diff.
-  assert.throws(() => compileScenario({ ...scenarioFiles, steps: [...scenarioFiles.steps, step({ removeReferences: { 'demo-orders': [gone] } })] }), /not behaviour-style/);
+  // Registry-style source warns about the diff but still performs the removal. Blocking here would
+  // block archiving for every service whose template has no behaviour style, which is the opposite
+  // of what the campaign needs.
+  const registryRemoval = compileScenario({ ...scenarioFiles, steps: [...scenarioFiles.steps, step({ removeReferences: { 'demo-orders': [gone] } })] });
+  assert.equal(registryRemoval.services.find((item) => item.key === 'demo-orders').references.includes(gone), false, 'the removal must happen regardless of source style');
+  assert.match(registryRemoval.removalWarnings.join(' '), /registry-style/);
+  assert.equal(compileScenario(scenarioFiles).removalWarnings.length, 0, 'a scenario with no registry-style removal must warn about nothing');
   const removed = compileScenario({ ...behaviourOrders, steps: [...behaviourOrders.steps, step({ removeReferences: { 'demo-orders': [gone] } })] });
   const orders = removed.services.find((item) => item.key === 'demo-orders');
   assert.equal(orders.references.includes(gone), false);
@@ -1084,7 +1089,11 @@ test('a prepared removal changes nothing on main and leaves the flag still evalu
   assert.ok(orders.references.includes(gone), 'an unmerged pull request must not stop the evaluations');
   assert.deepEqual(orders.retired, [], 'nothing is retired until the pull request is merged');
   assert.deepEqual(orders.prepared, [gone]);
-  assert.throws(() => compileScenario({ ...scenarioFiles, steps: [...scenarioFiles.steps, step] }), /not behaviour-style/);
+  const onRegistry = compileScenario({ ...scenarioFiles, steps: [...scenarioFiles.steps, step] });
+  assert.deepEqual(onRegistry.services.find((item) => item.key === 'demo-orders').prepared, [gone]);
+  assert.match(onRegistry.removalWarnings.join(' '), /poor diff to show/);
+  // A warning must never move the checksum, or it would break the forward-only guarantee.
+  assert.equal(onRegistry.checksum, compileScenario({ ...scenarioFiles, steps: [...scenarioFiles.steps, step] }).checksum);
 });
 
 // --- Archive readiness. Every gate is a clock, and the whole campaign exists to run them for real,

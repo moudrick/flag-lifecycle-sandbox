@@ -103,6 +103,7 @@ try {
       for (const [key, references] of Object.entries(step.sourceReferences || {})) console.log(`  ${key} references ${references.join(', ')}`);
       for (const [key, removals] of Object.entries(step.removeReferences || {})) console.log(`  ${key} removes ${removals.join(', ')} from its source, merged by this step`);
       for (const [key, removals] of Object.entries(step.prepareRemoval || {})) console.log(`  ${key} gets an OPEN pull request removing ${removals.join(', ')}; nothing on main changes until it is merged`);
+      for (const warning of compiled.removalWarnings || []) console.log(`WARNING: ${warning}`);
       for (const [key, version] of Object.entries(step.releaseTags || {})) console.log(`  ${key} tag ${key}-${version}`);
       console.log(`Deployment tuples after this step: ${compiled.deployments.length} of maximum ${scenario.sandbox.limits.maxEvaluatorContainers}`);
       for (const tuple of compiled.deployments) console.log(`  ${tuple.service}/${tuple.environment}${tuple.cluster ? `/${tuple.cluster}` : ''} ${tuple.release || 'default branch'} ${tuple.traffic}`);
@@ -153,13 +154,31 @@ try {
       for (const tuple of compiled.deployments) console.log(`  ${tuple.service}/${tuple.environment}${tuple.cluster ? `/${tuple.cluster}` : ''} | ${tuple.release || 'default branch'} | ${tuple.traffic}`);
       if (changed) console.log('Restart the runtime with the documented docker compose command to pick this up.');
     } else if (sub === 'evaluations') {
+      // A flag stays noisy because something still calls it, so name the callers rather than leaving
+      // the reader to work out why the silence clock never starts.
+      const appliedIds = readState().appliedSteps.map((item) => item.id).sort();
+      const running = appliedIds.length ? compileScenario({ ...scenario, steps: stepsThrough(scenario.steps, appliedIds.at(-1)) }) : compileScenario(scenario);
+      const deployed = new Set(running.deployments.map((tuple) => tuple.service));
+      const templates = new Map(scenario.services.services.map((service) => [service.key, service.template]));
+      const callersOf = (key) => running.services.filter((service) => service.references.includes(key) && deployed.has(service.key)).map((service) => service.key);
       const report = await flagEvaluationStatus(fetch, env);
       console.log(`Evaluation recency at ${report.checkedAt}. Archive needs a flag at least ${ARCHIVE_GATES.minimumFlagAgeDays} days old and silent in every critical environment for ${ARCHIVE_GATES.noEvaluationDays} days.`);
-      console.log('FLAG | AGE | SILENT FOR | CRITICAL ENVIRONMENTS | VERDICT');
+      console.log('FLAG | AGE | SILENT FOR | DEPLOYED CALLERS | VERDICT');
       for (const flag of report.flags) {
-        const critical = flag.environments.filter((row) => row.critical).map((row) => `${row.environment}:${row.state}${row.lastRequested ? '' : ' (never)'}`).join(' ');
         const silent = flag.silentDays === null ? '-' : (flag.silentDays === Infinity ? 'never evaluated' : `${flag.silentDays.toFixed(1)}d`);
-        console.log(`${flag.key} | ${flag.ageDays === null ? '-' : `${flag.ageDays.toFixed(0)}d`} | ${silent} | ${critical} | ${flag.ready ? 'READY TO ARCHIVE' : flag.blockers.join('; ')}`);
+        const callers = callersOf(flag.key);
+        console.log(`${flag.key} | ${flag.ageDays === null ? '-' : `${flag.ageDays.toFixed(0)}d`} | ${silent} | ${callers.join(', ') || 'none'} | ${flag.ready ? 'READY TO ARCHIVE' : flag.blockers.join('; ')}`);
+      }
+      // Removal has to reach every deployed caller. One left behind keeps the flag alive and the
+      // silence clock never starts, which is the single most common reason cleanup stalls.
+      const multi = report.flags.filter((flag) => callersOf(flag.key).length > 1);
+      if (multi.length) {
+        console.log(`Flags with more than one deployed caller (${multi.length}): each must be removed from ALL of them before evaluations can reach zero.`);
+        for (const flag of multi) {
+          const callers = callersOf(flag.key);
+          const awkward = callers.filter((key) => templates.get(key) !== 'nodejs');
+          console.log(`  ${flag.key} <- ${callers.join(', ')}${awkward.length ? ` (${awkward.join(', ')} is ${awkward.map((key) => templates.get(key)).join(', ')}: removal works, but the diff will not be presentable)` : ''}`);
+        }
       }
       const ready = report.flags.filter((flag) => flag.ready);
       console.log(`Ready to archive now: ${ready.length ? ready.map((flag) => flag.key).join(', ') : 'none'}.`);

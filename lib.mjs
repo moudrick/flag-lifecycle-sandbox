@@ -1425,6 +1425,7 @@ export function compileScenario({ sandbox, services, catalog, steps, budget }, c
   const environmentClusters = new Map(sandbox.environments.map((environment) => [environment.key, environment.clusters]));
   const patterns = new Set([...Object.keys(sandbox.trafficPatterns || {}), ...Object.keys(sandbox.drainPatterns || {})]);
   const introduced = new Map();
+  const removalWarnings = [];
   for (const service of services.services) {
     if (service.cohort !== 'pre-campaign') continue;
     introduced.set(service.key, { key: service.key, template: service.template, style: service.sourceStyle || 'registry', references: [...(PRE_CAMPAIGN_REFERENCES[service.key] || [])], retired: [], tag: null, introducedBy: 'pre-campaign' });
@@ -1470,14 +1471,17 @@ export function compileScenario({ sandbox, services, catalog, steps, budget }, c
     for (const [key, removals] of Object.entries(step.prepareRemoval || {})) {
       const target = introduced.get(key);
       if (!target) throw new Error(`Step ${step.id} prepares a removal for ${key}, which is not introduced yet.`);
-      if (target.style !== 'behaviour') throw new Error(`Step ${step.id} prepares a removal for ${key}, whose source is not behaviour-style; the removal diff would be unreadable.`);
+      // Source style decides how legible the diff is, not whether the removal works. Blocking on it
+      // would block a legitimate archive path for every service whose template has no behaviour
+      // style yet, so this warns and proceeds.
+      if (target.style !== 'behaviour') removalWarnings.push(`Step ${step.id} prepares a removal for ${key}, whose source is registry-style: the flag key leaves an array, which is a poor diff to show. The removal itself is sound.`);
       for (const flag of removals) if (!target.references.includes(flag)) throw new Error(`Step ${step.id} prepares removal of ${flag} from ${key}, which does not reference it.`);
       target.prepared = [...new Set([...(target.prepared || []), ...removals])].sort();
     }
     for (const [key, removals] of Object.entries(step.removeReferences || {})) {
       const target = introduced.get(key);
       if (!target) throw new Error(`Step ${step.id} removes source references from ${key}, which is not introduced yet.`);
-      if (target.style !== 'behaviour') throw new Error(`Step ${step.id} removes a reference from ${key}, whose source is not behaviour-style; the removal diff would be unreadable.`);
+      if (target.style !== 'behaviour') removalWarnings.push(`Step ${step.id} removes a reference from ${key}, whose source is registry-style: the diff will not be presentable, though the evaluations stop either way.`);
       for (const flag of removals) {
         if (!target.references.includes(flag)) throw new Error(`Step ${step.id} removes ${flag} from ${key}, which does not reference it.`);
         target.references = target.references.filter((item) => item !== flag);
@@ -1552,7 +1556,9 @@ export function compileScenario({ sandbox, services, catalog, steps, budget }, c
     targeting: targetingList,
     steps: applied
   };
-  const compiled = { ...model, checksum: scenarioChecksum(model), distribution: targetingDistribution(targetingList, catalog, sandbox) };
+  // Attached after the checksum on purpose: a warning is an observation about the plan, not part
+  // of it, and must never move the checksum that makes steps forward-only.
+  const compiled = { ...model, checksum: scenarioChecksum(model), distribution: targetingDistribution(targetingList, catalog, sandbox), removalWarnings };
   // The budget warns rather than refuses: earlier steps legitimately declared more evaluators than
   // the measured cost now allows, and rewriting applied history would be worse than flagging it.
   if (budget) {
