@@ -451,6 +451,30 @@ export function batchSize(profile, at) {
 }
 `;
 }
+// A flag key becomes a function name: demo-email-notifications-v2 -> emailNotificationsV2.
+export function featureFunctionName(key) {
+  const parts = key.replace(/^demo-/, '').split('-');
+  return parts.map((part, index) => index === 0 ? part : part[0].toUpperCase() + part.slice(1)).join('');
+}
+// Behaviour style puts every flag in its own named function with the key at a real call site,
+// so removing a flag is a readable diff — a function and its registry entry disappear — rather
+// than one element vanishing from an array. Only services that will receive a removal pull
+// request need it; the rest keep the compact registry form.
+export function featureBlocks(flags, descriptions = {}, removed = []) {
+  const gone = new Set(removed);
+  const live = flags.filter((key) => !gone.has(key));
+  const functions = live.map((key) => {
+    const name = featureFunctionName(key);
+    const what = descriptions[key] || 'behaviour change';
+    return `// ${key} — ${what}
+async function ${name}(client, context) {
+  return client.boolVariation('${key}', context, false);
+}`;
+  }).join('\n\n');
+  const registry = live.map((key) => `  { key: '${key}', evaluate: ${featureFunctionName(key)} }`).join(',\n');
+  const retired = [...gone].map((key) => `// Permanently enabled, flag removed: ${key} (${descriptions[key] || 'behaviour change'}).`).join('\n');
+  return { functions, registry, retired, live };
+}
 function repositoryFiles(repository, flags, release = 'v001', topology = DEFAULT_CLUSTER_TOPOLOGY) {
   return [
     { path: 'package.json', content: `${JSON.stringify({ name: repository, private: true, type: 'module', scripts: { evaluate: 'node app.mjs', traffic: 'node app.mjs --traffic' }, dependencies: { '@launchdarkly/node-server-sdk': '^9.0.0' } }, null, 2)}\n` },
