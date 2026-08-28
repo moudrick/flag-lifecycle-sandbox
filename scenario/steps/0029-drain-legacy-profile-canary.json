@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "id": "s032",
-  "title": "Last cluster stops; demo-legacy-profile falls silent everywhere",
-  "recommendedDate": "2026-09-13",
+  "id": "s029",
+  "title": "Merge the removal; the canary cluster stops evaluating demo-legacy-profile",
+  "recommendedDate": "2026-09-05",
   "cadence": "three-day",
   "transition": "production-expansion",
   "minGapDaysFromPrevious": 0,
@@ -55,36 +55,55 @@
       "service": "demo-profile",
       "environment": "production",
       "cluster": "prod-sa-east-02",
-      "release": "v005",
+      "release": "v004",
       "traffic": "business-hours-production"
     },
     {
       "service": "demo-profile",
       "environment": "production",
       "cluster": "prod-us-east-02",
-      "release": "v005",
+      "release": "v004",
       "traffic": "business-hours-production"
     },
     {
       "service": "demo-profile",
       "environment": "production",
       "cluster": "prod-emea-central-04",
-      "release": "v005",
+      "release": "v004",
       "traffic": "business-hours-production"
     },
     {
       "service": "demo-profile",
       "environment": "production",
       "cluster": "prod-eu-west-01",
-      "release": "v005",
+      "release": "v004",
       "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-inventory",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-support",
+      "environment": "dev",
+      "traffic": "periodic"
     }
   ],
+  "updateServices": [
+    "demo-profile"
+  ],
+  "releaseTags": {
+    "demo-profile": "v005"
+  },
+  "removeReferences": {
+    "demo-profile": [
+      "demo-legacy-profile"
+    ]
+  },
   "notes": [
-    "One more cluster redeploys onto v005. 5 of 5 Production clusters have now stopped evaluating demo-legacy-profile.",
-    "Each pinned evaluator generates the same batch volume, so the fall is even rather than weighted by cluster size. Worth saying out loud, because the chart will be read as traffic and it is really deployments.",
-    "Every cluster is now on v005. The flag is referenced nowhere and evaluated nowhere, and the seven-day silence clock starts today.",
-    "Flag age is the other gate and the binding one: these flags were created around 16 August, so thirty days lands about 15 September. Silence from 13 September clears on 20 September, so archiving becomes possible around 20 September.",
-    "That is after the 13 September slide freeze and well before the 5 October talk. The timing is not a problem to work around; it is why the archive itself is the live act on stage rather than a screenshot."
+    "The prepared pull request is merged and tagged v005. Main no longer references demo-legacy-profile.",
+    "Only the canary cluster redeploys onto it. The other four stay on v004 and keep evaluating the flag, which is what a staged rollout of a code removal actually looks like.",
+    "The no-evaluations clock does not start here. It starts when the last cluster stops, and any cluster left behind on v004 keeps resetting it."
   ]
 }

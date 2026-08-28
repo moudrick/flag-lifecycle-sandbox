@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "s029",
+  "id": "s030",
   "title": "Second cluster stops evaluating demo-legacy-profile",
   "recommendedDate": "2026-09-07",
   "cadence": "three-day",
@@ -78,6 +78,16 @@
       "cluster": "prod-eu-west-01",
       "release": "v004",
       "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-inventory",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-support",
+      "environment": "dev",
+      "traffic": "periodic"
     }
   ],
   "notes": [

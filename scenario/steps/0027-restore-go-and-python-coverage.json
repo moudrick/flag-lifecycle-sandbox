@@ -1,18 +1,13 @@
 {
   "schemaVersion": 1,
   "id": "s027",
-  "title": "Open the pull request that removes demo-legacy-profile, and leave it open",
-  "recommendedDate": "2026-09-03",
-  "cadence": "three-day",
+  "title": "Restore Go and Python evaluation coverage without spending any silence",
+  "recommendedDate": "2026-09-02",
+  "cadence": "daily",
   "transition": "production-expansion",
   "minGapDaysFromPrevious": 0,
   "gates": [],
   "targeting": [],
-  "prepareRemoval": {
-    "demo-profile": [
-      "demo-legacy-profile"
-    ]
-  },
   "deploy": [
     {
       "service": "demo-orders",
@@ -83,11 +78,24 @@
       "cluster": "prod-eu-west-01",
       "release": "v004",
       "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-inventory",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-support",
+      "environment": "dev",
+      "traffic": "periodic"
     }
   ],
   "notes": [
-    "The pull request is opened and deliberately not merged. Nothing on main changes, the flag keeps being evaluated by every cluster, and the archive gates stay exactly where they were.",
-    "It exists to be looked at: a real diff, on a real repository, removing a real flag reference, sitting open for two days before anyone merges it.",
-    "Merging is a separate act on a separate date, because the gap between opening a removal and its evaluations actually stopping is the thing the talk is about."
+    "The campaign claims four languages and has been producing evaluation evidence in two. Go and Python have contributed code references only, because the connection-budget cut in August stopped every Go and Python evaluator and they were never restored.",
+    "demo-inventory brings Go back. It is the only Go service every one of whose flags is already evaluated by a running service, so restoring it resets no clock anywhere. demo-payments would have cost demo-fraud-screening its silence and is deliberately left down.",
+    "demo-support brings Python back, and it goes to Dev rather than Production. Archive checks run in critical environments only, which here are Production and Staging, so evaluating in Dev accrues no lastRequested that any gate reads. demo-support-assistant keeps its Production silence intact while its Python code is demonstrably still being exercised.",
+    "That asymmetry is worth a slide on its own: a flag can be under continuous evaluation in a lower environment and still be reported archive-ready, because the gate does not look there.",
+    "Two evaluators, twelve to fourteen, one day after the step that went from eight to twelve. Re-measure before adding more; the last known-expensive configuration was thirty-two and the last known-free one is eight, and nothing between them has been measured.",
+    "demo-identity, demo-pricing, demo-recommendations and demo-search stay down on purpose. Every flag they reference is already evaluated by a service that is running, so restoring them would add containers and connections while adding no evidence at all."
   ]
 }
