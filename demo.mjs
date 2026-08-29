@@ -238,8 +238,11 @@ try {
         try {
           usage = await fetchServiceConnections(fetch, env);
           const last = budget.observations.at(-1);
-          if (!last || last.used !== usage.latest.used || last.containers !== containersNow) {
-            budget.observations.push({ at: new Date().toISOString(), used: usage.latest.used, containers: containersNow, note: `live reading for ${usage.latest.date}` });
+          // Record once per vendor datapoint, not only when the number moves. A run of identical
+          // readings IS the evidence that burn is zero, and skipping them left the series looking
+          // stale and made the tool warn about its own silence.
+          if (!last || last.used !== usage.latest.used || last.containers !== containersNow || last.date !== usage.latest.date) {
+            budget.observations.push({ at: new Date().toISOString(), date: usage.latest.date, used: usage.latest.used, containers: containersNow, note: `live reading for ${usage.latest.date}` });
             fs.writeFileSync(file, `${JSON.stringify(budget, null, 2)}
 `);
             console.log(`Recorded live reading ${usage.latest.used.toFixed(4)} for ${usage.latest.date} at ${containersNow} evaluator(s).`);
