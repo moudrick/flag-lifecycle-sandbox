@@ -88,6 +88,12 @@
       "service": "demo-support",
       "environment": "dev",
       "traffic": "periodic"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "staging",
+      "release": "v005",
+      "traffic": "business-hours-staging"
     }
   ],
   "updateServices": [
@@ -104,6 +110,8 @@
   "notes": [
     "The prepared pull request is merged and tagged v005. Main no longer references demo-legacy-profile.",
     "Only the canary cluster redeploys onto it. The other four stay on v004 and keep evaluating the flag, which is what a staged rollout of a code removal actually looks like.",
-    "The no-evaluations clock does not start here. It starts when the last cluster stops, and any cluster left behind on v004 keeps resetting it."
+    "The no-evaluations clock does not start here. It starts when the last cluster stops, and any cluster left behind on v004 keeps resetting it.",
+    "Staging takes v005 in the same step as the merge, before any Production cluster expands beyond the canary. That is the order a real release goes in, and it means Staging stops evaluating demo-legacy-profile first rather than having been dark all along.",
+    "Both critical environments are now genuinely in the drain: Staging by deployment, Production one cluster at a time."
   ]
 }

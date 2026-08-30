@@ -88,6 +88,12 @@
       "service": "demo-support",
       "environment": "dev",
       "traffic": "periodic"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "staging",
+      "release": "v005",
+      "traffic": "business-hours-staging"
     }
   ],
   "notes": [
@@ -95,6 +101,7 @@
     "Each pinned evaluator generates the same batch volume, so the fall is even rather than weighted by cluster size. Worth saying out loud, because the chart will be read as traffic and it is really deployments.",
     "Every cluster is now on v005. The flag is referenced nowhere and evaluated nowhere, and the seven-day silence clock starts today.",
     "Flag age is the other gate and the binding one: these flags were created around 16 August, so thirty days lands about 15 September. Silence from 13 September clears on 20 September, so archiving becomes possible around 20 September.",
-    "That is after the 13 September slide freeze and well before the 5 October talk. The timing is not a problem to work around; it is why the archive itself is the live act on stage rather than a screenshot."
+    "That is after the 13 September slide freeze and well before the 5 October talk. The timing is not a problem to work around; it is why the archive itself is the live act on stage rather than a screenshot.",
+    "Both critical environments are now silent because their code stopped calling the flag, not because nothing was running. That is the difference between evidence and coincidence, and it is the whole reason the Staging evaluator was added at s026."
   ]
 }

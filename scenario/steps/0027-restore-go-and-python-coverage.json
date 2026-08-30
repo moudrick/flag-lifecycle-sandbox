@@ -88,6 +88,12 @@
       "service": "demo-support",
       "environment": "dev",
       "traffic": "periodic"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "staging",
+      "release": "v004",
+      "traffic": "business-hours-staging"
     }
   ],
   "notes": [

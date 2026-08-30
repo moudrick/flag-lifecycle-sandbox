@@ -133,6 +133,12 @@
       "cluster": "prod-eu-west-01",
       "release": "v004",
       "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "staging",
+      "release": "v004",
+      "traffic": "business-hours-staging"
     }
   ],
   "notes": [
@@ -141,6 +147,8 @@
     "Behaviour style is what makes the removal pull request readable. A flag leaving an array is a line of noise; a flag leaving this source deletes a function, deletes a registry line, and adds a comment recording that the behaviour is now permanent.",
     "Cluster pinning is what makes the drain visible. Five evaluators each pinned to one Production cluster can run different release tags simultaneously, so a code removal rolled out cluster by cluster appears as steps rather than as a cliff.",
     "Evaluators go from eight to twelve. Dated 1 September on purpose: the metered month resets first, so this spends a fresh budget rather than the last quarter of August. Re-measure after a full day at twelve before going further.",
-    "demo-legacy-profile is the drain subject because demo-profile is its only deployed caller. Ten of the twenty-four flags have more than one, and none of those can reach zero evaluations until every caller is dealt with."
+    "demo-legacy-profile is the drain subject because demo-profile is its only deployed caller. Ten of the twenty-four flags have more than one, and none of those can reach zero evaluations until every caller is dealt with.",
+    "demo-profile also gains a Staging evaluator, which it has never had. Until now the only Staging evaluator in the whole campaign was demo-orders, so sixteen of twenty-four flags have shown no Staging evaluations since 20 August \u2014 silent because nothing runs there, not because anything was cleaned up.",
+    "That matters because archive checks require silence in every critical environment. With Staging already dark, the gate quietly collapses into a Production-only check, and any archive claim would be half earned. This is the campaign quietly falling into the trap the talk is about."
   ]
 }
