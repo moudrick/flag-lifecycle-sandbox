@@ -1565,7 +1565,9 @@ export function compileScenario({ sandbox, services, catalog, steps, budget }, c
     try {
       const report = connectionBudget(budget, { ...controls, containers: model.deployments.length });
       compiled.budget = report;
-      if (report.affordableContainers !== null && model.deployments.length > report.affordableContainers) {
+      if (report.affordableContainers === null) {
+        compiled.budgetWarning = `CONNECTION BUDGET: affordability could not be computed, so this scenario's ${model.deployments.length} evaluator(s) are unguarded. ${report.warnings.join(' ')}`;
+      } else if (model.deployments.length > report.affordableContainers) {
         compiled.budgetWarning = `CONNECTION BUDGET: this scenario declares ${model.deployments.length} evaluator(s) but measured cost affords ${report.affordableContainers} for the rest of the month (projected ${report.projectedMonthEnd === null ? 'unknown' : report.projectedMonthEnd.toFixed(2)} of ${report.limit}). Recommended tier: ${report.recommendedTier ? report.recommendedTier.name : 'none'}.`;
       }
     } catch (error) { compiled.budgetWarning = `CONNECTION BUDGET could not be evaluated: ${error.message}`; }
@@ -1780,7 +1782,13 @@ export function connectionBudget(budget, controls = {}) {
     : (costPerContainer <= 0 ? Number.MAX_SAFE_INTEGER
       : Math.max(0, Math.floor((headroom * days / remainingDays) / costPerContainer)));
   const measuredCount = measuredOver ? measuredOver.containers : null;
-  const affordable = naive === null ? null : (measuredCount ? Math.min(naive, measuredCount * 2) : naive);
+  // The headroom projection needs days remaining and goes null on the last day of the month. The
+  // super-linearity cap does not: it says only that we have measured one configuration and must not
+  // leap far past it, which is true on any day. Letting affordability go null took the compile-time
+  // guard offline entirely and made the tier advice fall back to the largest tier.
+  const affordable = naive === null
+    ? (measuredCount ? measuredCount * 2 : null)
+    : (measuredCount ? Math.min(naive, measuredCount * 2) : naive);
   let severity = BUDGET_SEVERITY.ok; const warnings = [];
   if (latest.used >= budget.limit) { severity = BUDGET_SEVERITY.over; warnings.push(`Limit reached: ${latest.used} of ${budget.limit} used.`); }
   else if (projectedMonthEnd !== null && projectedMonthEnd > budget.limit) {
@@ -1800,6 +1808,9 @@ export function connectionBudget(budget, controls = {}) {
   }
   if (costPerContainer === null) warnings.push('No interval with a stable evaluator count yet, so cost per evaluator cannot be derived. Judge by daily spend against the allowed rate instead.');
   if (naive !== null && affordable !== null && naive > affordable) warnings.push(`Raw headroom suggests ${naive} evaluator(s), but cost scales super-linearly and only ${measuredCount} has been measured. Capped at ${affordable}; step up gradually and re-measure after a full day.`);
+  if (naive === null) warnings.push(affordable === null
+    ? 'Affordability cannot be computed: no days remain in the metered month and no configuration has been measured. Treat every increase as unbudgeted.'
+    : `No days remain in the metered month, so no month-end projection is possible. The cap of ${affordable} is the measured-configuration cap alone and says nothing about what the next month affords.`);
   const staleHours = (now.getTime() - Date.parse(latest.at)) / 3600000;
   if (staleHours > 36) warnings.push(`Latest reading is ${Math.round(staleHours)} hours old. Record a fresh one before trusting this projection.`);
   const tier = (budget.tiers || []).filter((entry) => affordable === null || entry.containers <= affordable).sort((a, b) => b.containers - a.containers)[0] || null;

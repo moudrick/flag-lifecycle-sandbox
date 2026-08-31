@@ -1149,3 +1149,27 @@ test('nothing claims an evaluator count from the whole scenario when it means th
   assert.ok(planned.deployments.length >= running.deployments.length);
   assert.ok(planned.steps.length > running.steps.length, 'the scenario currently plans further ahead than it has applied');
 });
+
+test('the budget guard stays engaged on the last day of the metered month', () => {
+  // The month-end projection needs days remaining and goes null on the final day. The
+  // super-linearity cap does not depend on days at all, and letting it go null with the projection
+  // took the compile-time guard offline and made the tier advice fall back to the largest tier —
+  // the exact configuration that caused the original overrun.
+  const budget = {
+    schemaVersion: 1, limit: 5,
+    tiers: [{ name: 'full', containers: 32, keep: 'everything' }, { name: 'reduced', containers: 8, keep: 'less' }],
+    observations: [
+      { at: '2026-08-29T00:00:00Z', date: '2026-08-29', used: 3.8, containers: 8, note: 'measured' },
+      { at: '2026-08-31T00:00:00Z', date: '2026-08-31', used: 3.8, containers: 8, note: 'measured' }
+    ]
+  };
+  const lastDay = connectionBudget(budget, { now: '2026-08-31T12:00:00Z', containers: 8 });
+  assert.equal(lastDay.remainingDays, 0, 'this test is only meaningful on the final day');
+  assert.equal(lastDay.affordableContainers, 16, 'the measured cap binds regardless of days remaining');
+  assert.equal(lastDay.recommendedTier.name, 'reduced', 'a null cap must not promote the largest tier');
+  assert.match(lastDay.warnings.join(' '), /No days remain in the metered month/);
+  // Mid-month the projection is available and must still cap at twice the measured configuration.
+  const midMonth = connectionBudget(budget, { now: '2026-08-20T12:00:00Z', containers: 8 });
+  assert.ok(midMonth.remainingDays > 0);
+  assert.equal(midMonth.affordableContainers, 16);
+});
