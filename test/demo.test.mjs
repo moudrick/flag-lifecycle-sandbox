@@ -1007,8 +1007,12 @@ test('materialising releases checks out each pinned tag once and reuses a tree a
 });
 
 test('a model with no pinned release needs no worktree and touches no git command', async () => {
-  // The running campaign, not the plan: later steps pin releases on purpose.
-  const model = appliedModel();
+  // A property of the function, not of the campaign. This once compiled the applied model and
+  // asserted it had no pinned release — true until s026 pinned five clusters, at which point the
+  // test failed for describing yesterday's campaign rather than the contract it meant to check.
+  const pinned = appliedModel();
+  assert.ok(releaseTrees(pinned).length, 'the running campaign pins releases now; the complement is covered below');
+  const model = { ...pinned, deployments: pinned.deployments.map(({ release, cluster, ...rest }) => rest) };
   assert.deepEqual(releaseTrees(model), []);
   const calls = [];
   const result = await materialiseReleases(model, { root: process.cwd(), fileSystem: { existsSync: () => true, mkdirSync: () => { calls.push('mkdir'); } }, run: async () => { calls.push('git'); } });
