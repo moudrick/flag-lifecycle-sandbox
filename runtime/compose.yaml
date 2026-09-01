@@ -40,9 +40,9 @@ x-orders: &orders
   stop_grace_period: 30s
   logging: *rotated-logs
 
-x-profile: &profile
-  build: ./repos/demo-profile
-  image: clean-room-demo/demo-profile:local
+x-profile-v004: &profile-v004
+  build: ./worktrees/demo-profile-v004
+  image: clean-room-demo/demo-profile:v004
   init: true
   restart: unless-stopped
   stop_grace_period: 30s
@@ -93,12 +93,45 @@ services:
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
       DEMO_ENVIRONMENT: production
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
-  profile-production:
-    <<: *profile
+  profile-production-emea-central-04:
+    <<: *profile-v004
     environment:
       <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
       DEMO_ENVIRONMENT: production
+      DEMO_CLUSTER: prod-emea-central-04
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  profile-production-eu-west-01:
+    <<: *profile-v004
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+      DEMO_CLUSTER: prod-eu-west-01
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  profile-production-eu-west-02:
+    <<: *profile-v004
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+      DEMO_CLUSTER: prod-eu-west-02
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  profile-production-sa-east-02:
+    <<: *profile-v004
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+      DEMO_CLUSTER: prod-sa-east-02
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  profile-production-us-east-02:
+    <<: *profile-v004
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+      DEMO_CLUSTER: prod-us-east-02
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
   shipping-production:
     <<: *shipping
@@ -116,6 +149,13 @@ services:
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
   orders-staging:
     <<: *orders
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
+      DEMO_ENVIRONMENT: staging
+    command: ["npm", "run", "traffic", "--", "--profile", "staging"]
+  profile-staging:
+    <<: *profile-v004
     environment:
       <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
