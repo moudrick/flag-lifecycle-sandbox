@@ -24,6 +24,14 @@ x-checkout: &checkout
   stop_grace_period: 30s
   logging: *rotated-logs
 
+x-inventory: &inventory
+  build: ./repos/demo-inventory
+  image: clean-room-demo/demo-inventory:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
 x-notifications: &notifications
   build: ./repos/demo-notifications
   image: clean-room-demo/demo-notifications:local
@@ -64,6 +72,14 @@ x-storefront: &storefront
   stop_grace_period: 30s
   logging: *rotated-logs
 
+x-support: &support
+  build: ./repos/demo-support
+  image: clean-room-demo/demo-support:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
 services:
   catalog-production:
     <<: *catalog
@@ -79,6 +95,13 @@ services:
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
       DEMO_ENVIRONMENT: production
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  inventory-production:
+    <<: *inventory
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+    command: ["/app/evaluator", "--traffic", "--profile", "production"]
   notifications-production:
     <<: *notifications
     environment:
@@ -161,3 +184,10 @@ services:
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
       DEMO_ENVIRONMENT: staging
     command: ["npm", "run", "traffic", "--", "--profile", "staging"]
+  support-dev:
+    <<: *support
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_DEV:?missing dev SDK key}
+      DEMO_ENVIRONMENT: dev
+    command: ["python", "-u", "app.py", "--traffic", "--profile", "dev"]
