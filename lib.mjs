@@ -1773,7 +1773,29 @@ export function connectionBudget(budget, controls = {}) {
   const sameShape = measuredOver && measuredOver.containers === running && burnPerDay !== null;
   const projectedBurn = sameShape ? burnPerDay * remainingDays
     : (costPerContainer === null ? null : (costPerContainer * running / days) * remainingDays);
-  const projectedMonthEnd = projectedBurn === null ? null : latest.used + projectedBurn;
+  // Whatever the model says, the meter is the authority. The most recent interval is used even when
+  // it spans a change in evaluator count, because a projection that sits below the rate actually
+  // being observed is worse than no projection: on 3 September it read 1.20 at month end while the
+  // meter was running at 1.77 a day, and that false reassurance is what let the burn go a day
+  // further than it should have.
+  let observedBurnPerDay = null; let observedAtContainers = null;
+  for (let index = observations.length - 1; index > 0; index -= 1) {
+    const to = observations[index]; const from = observations[index - 1];
+    const span = (Date.parse(to.at) - Date.parse(from.at)) / 86400000;
+    if (span <= 0.2 || to.used < from.used) continue;
+    observedBurnPerDay = (to.used - from.used) / span;
+    observedAtContainers = to.containers;
+    break;
+  }
+  // The floor is directional. A rate observed at the same or a smaller configuration is evidence
+  // about the one running now and must not be projected away. A rate observed at a LARGER one is
+  // not: after a deliberate cut, holding the old rate would mean the tool never acknowledges that
+  // the cut worked. Reductions instead get an explicit unverified warning until a fresh reading.
+  const reduced = observedAtContainers !== null && running < observedAtContainers;
+  const observedProjection = observedBurnPerDay === null || reduced ? null : latest.used + observedBurnPerDay * remainingDays;
+  const modelled = projectedBurn === null ? null : latest.used + projectedBurn;
+  const projectedMonthEnd = modelled === null ? observedProjection
+    : (observedProjection === null ? modelled : Math.max(modelled, observedProjection));
   // Scaling is super-linear: 32 evaluators cost roughly 76 times what 2 do, for 16 times the count.
   // So an affordability figure extrapolated far beyond the measured configuration is not evidence,
   // it is the same error that caused the overrun. Cap the recommendation at twice what has actually
@@ -1807,10 +1829,22 @@ export function connectionBudget(budget, controls = {}) {
     warnings.push(`No clean measurement at ${running} evaluator(s) yet: cost was measured at ${measuredOver.containers}. Cost per evaluator is not linear, so treat the projection as indicative and re-check after a full day at the current count.`);
   }
   if (costPerContainer === null) warnings.push('No interval with a stable evaluator count yet, so cost per evaluator cannot be derived. Judge by daily spend against the allowed rate instead.');
+  if (reduced) warnings.push(`Evaluators were reduced from ${observedAtContainers} to ${running}. The last measured rate of ${observedBurnPerDay.toFixed(3)} per day belongs to the old configuration, so this projection is unverified until a full reading at ${running}.`);
+  if (modelled !== null && observedProjection !== null && observedProjection > modelled + 0.0001) {
+    warnings.push(`The measured configuration predicts ${modelled.toFixed(2)} at month end, but the meter is currently running at ${observedBurnPerDay.toFixed(3)} per day, which reaches ${observedProjection.toFixed(2)}. The observed rate is the one reported above: a projection below what is actually being spent is not a projection.`);
+  }
   if (naive !== null && affordable !== null && naive > affordable) warnings.push(`Raw headroom suggests ${naive} evaluator(s), but cost scales super-linearly and only ${measuredCount} has been measured. Capped at ${affordable}; step up gradually and re-measure after a full day.`);
   if (naive === null) warnings.push(affordable === null
     ? 'Affordability cannot be computed: no days remain in the metered month and no configuration has been measured. Treat every increase as unbudgeted.'
     : `No days remain in the metered month, so no month-end projection is possible. The cap of ${affordable} is the measured-configuration cap alone and says nothing about what the next month affords.`);
+  // The meter fills a day's datapoint in as the day passes. Reading it mid-day therefore understates
+  // that day, and a reading of zero at midday means "not yet accumulated", not "free". On 2 September
+  // that exact reading was taken as proof that thirteen evaluators cost nothing; the day closed at
+  // 0.4354. Any rate derived from today's figure is a lower bound and must be labelled as one.
+  const latestDate = latest.date || String(latest.at).slice(0, 10);
+  if (latestDate === now.toISOString().slice(0, 10)) {
+    warnings.push(`The latest reading is for today (${latestDate}) and the meter fills a day in as it passes, so ${latest.used.toFixed(4)} is a partial figure. Every rate derived from it understates the real one. Judge a configuration only on a closed day.`);
+  }
   const staleHours = (now.getTime() - Date.parse(latest.at)) / 3600000;
   if (staleHours > 36) warnings.push(`Latest reading is ${Math.round(staleHours)} hours old. Record a fresh one before trusting this projection.`);
   const tier = (budget.tiers || []).filter((entry) => affordable === null || entry.containers <= affordable).sort((a, b) => b.containers - a.containers)[0] || null;

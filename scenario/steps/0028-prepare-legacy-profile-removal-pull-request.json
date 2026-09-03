@@ -25,31 +25,6 @@
       "traffic": "business-hours-staging"
     },
     {
-      "service": "demo-storefront",
-      "environment": "production",
-      "traffic": "business-hours-production"
-    },
-    {
-      "service": "demo-checkout",
-      "environment": "production",
-      "traffic": "business-hours-production"
-    },
-    {
-      "service": "demo-catalog",
-      "environment": "production",
-      "traffic": "business-hours-production"
-    },
-    {
-      "service": "demo-notifications",
-      "environment": "production",
-      "traffic": "business-hours-production"
-    },
-    {
-      "service": "demo-shipping",
-      "environment": "production",
-      "traffic": "business-hours-production"
-    },
-    {
       "service": "demo-profile",
       "environment": "production",
       "cluster": "prod-eu-west-02",
@@ -85,16 +60,6 @@
       "traffic": "business-hours-production"
     },
     {
-      "service": "demo-inventory",
-      "environment": "production",
-      "traffic": "business-hours-production"
-    },
-    {
-      "service": "demo-support",
-      "environment": "dev",
-      "traffic": "periodic"
-    },
-    {
       "service": "demo-profile",
       "environment": "staging",
       "release": "v004",
@@ -104,6 +69,9 @@
   "notes": [
     "The pull request is opened and deliberately not merged. Nothing on main changes, the flag keeps being evaluated by every cluster, and the archive gates stay exactly where they were.",
     "It exists to be looked at: a real diff, on a real repository, removing a real flag reference, sitting open for two days before anyone merges it.",
-    "Merging is a separate act on a separate date, because the gap between opening a removal and its evaluations actually stopping is the thing the talk is about."
+    "Merging is a separate act on a separate date, because the gap between opening a removal and its evaluations actually stopping is the thing the talk is about.",
+    "Emergency reduction. Fifteen evaluators burned 0.4354 on 2 September and were tracking 1.77 a day on 3 September, against a sustainable rate of 0.141. That reaches the limit of 5 around 5 September, the day the drain begins. Eight evaluators measured exactly 0.000 a day for eleven consecutive days in August, so the deployment returns to eight.",
+    "What survives is chosen, not whatever fitted: the five pinned Production clusters and Staging for demo-profile, which are the drain itself, plus demo-orders on Production and Staging, which carries all three control flags and both protected-pair flags. Ten flags stay evaluated.",
+    "Dropped: demo-catalog, demo-checkout, demo-notifications, demo-shipping, demo-storefront, and with them the Go and Python coverage restored only yesterday. Fourteen flags fall silent. That is a real loss of evidence, taken deliberately because a campaign that hits the connection limit before 13 September produces no evidence at all."
   ]
 }

@@ -20,31 +20,6 @@
       "traffic": "business-hours-staging"
     },
     {
-      "service": "demo-storefront",
-      "environment": "production",
-      "traffic": "business-hours-production"
-    },
-    {
-      "service": "demo-checkout",
-      "environment": "production",
-      "traffic": "business-hours-production"
-    },
-    {
-      "service": "demo-catalog",
-      "environment": "production",
-      "traffic": "business-hours-production"
-    },
-    {
-      "service": "demo-notifications",
-      "environment": "production",
-      "traffic": "business-hours-production"
-    },
-    {
-      "service": "demo-shipping",
-      "environment": "production",
-      "traffic": "business-hours-production"
-    },
-    {
       "service": "demo-profile",
       "environment": "production",
       "cluster": "prod-eu-west-02",
@@ -80,16 +55,6 @@
       "traffic": "business-hours-production"
     },
     {
-      "service": "demo-inventory",
-      "environment": "production",
-      "traffic": "business-hours-production"
-    },
-    {
-      "service": "demo-support",
-      "environment": "dev",
-      "traffic": "periodic"
-    },
-    {
       "service": "demo-profile",
       "environment": "staging",
       "release": "v005",
@@ -98,6 +63,7 @@
   ],
   "notes": [
     "One more cluster redeploys onto v005. 4 of 5 Production clusters have now stopped evaluating demo-legacy-profile.",
-    "Each pinned evaluator generates the same batch volume, so the fall is even rather than weighted by cluster size. Worth saying out loud, because the chart will be read as traffic and it is really deployments."
+    "Each pinned evaluator generates the same batch volume, so the fall is even rather than weighted by cluster size. Worth saying out loud, because the chart will be read as traffic and it is really deployments.",
+    "Eight evaluators, reduced at s028 after the connection burn at fifteen. The ladder is unaffected: every Production cluster and Staging is still its own evaluator."
   ]
 }

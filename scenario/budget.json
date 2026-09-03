@@ -91,6 +91,20 @@
       "used": 0,
       "containers": 13,
       "note": "live reading for 2026-09-02"
+    },
+    {
+      "at": "2026-09-03T10:24:36.750Z",
+      "date": "2026-09-03",
+      "used": 1.20388128,
+      "containers": 15,
+      "note": "live reading for 2026-09-03"
+    },
+    {
+      "at": "2026-09-03T10:29:27.585Z",
+      "date": "2026-09-03",
+      "used": 1.20388128,
+      "containers": 8,
+      "note": "live reading for 2026-09-03"
     }
   ],
   "tiers": [
