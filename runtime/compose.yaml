@@ -24,6 +24,14 @@ x-profile-v004: &profile-v004
   stop_grace_period: 30s
   logging: *rotated-logs
 
+x-profile-v005: &profile-v005
+  build: ./worktrees/demo-profile-v005
+  image: clean-room-demo/demo-profile:v005
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
 services:
   orders-production:
     <<: *orders
@@ -49,7 +57,7 @@ services:
       DEMO_CLUSTER: prod-eu-west-01
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
   profile-production-eu-west-02:
-    <<: *profile-v004
+    <<: *profile-v005
     environment:
       <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
@@ -80,7 +88,7 @@ services:
       DEMO_ENVIRONMENT: staging
     command: ["npm", "run", "traffic", "--", "--profile", "staging"]
   profile-staging:
-    <<: *profile-v004
+    <<: *profile-v005
     environment:
       <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
