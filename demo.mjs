@@ -162,7 +162,11 @@ try {
       const templates = new Map(scenario.services.services.map((service) => [service.key, service.template]));
       const callersOf = (key) => running.services.filter((service) => service.references.includes(key) && deployed.has(service.key)).map((service) => service.key);
       const report = await flagEvaluationStatus(fetch, env);
-      console.log(`Evaluation recency at ${report.checkedAt}. Archive needs a flag at least ${ARCHIVE_GATES.minimumFlagAgeDays} days old and silent in every critical environment for ${ARCHIVE_GATES.noEvaluationDays} days.`);
+      const g = report.gates;
+      console.log(`Evaluation recency at ${report.checkedAt}. Archive needs a flag at least ${g.minimumFlagAgeDays} days old and silent in every critical environment for ${g.noEvaluationDays} days.`);
+      console.log(report.gatesLive
+        ? `Gates read live from the project (version ${g.version}, last changed ${g.lastModified}). They are project configuration, not vendor law.`
+        : `WARNING: the gates could NOT be read from the project (${g.error}), so the documented defaults are assumed and may not match what is enforced.`);
       console.log('FLAG | AGE | SILENT FOR | DEPLOYED CALLERS | VERDICT');
       for (const flag of report.flags) {
         const silent = flag.silentDays === null ? '-' : (flag.silentDays === Infinity ? 'never evaluated' : `${flag.silentDays.toFixed(1)}d`);
@@ -186,10 +190,10 @@ try {
       // is running and any stray evaluation resets it.
       const draining = report.flags.filter((flag) => !flag.ready && Number.isFinite(flag.silentDays) && flag.silentDays >= 1);
       for (const flag of draining) {
-        const remaining = ARCHIVE_GATES.noEvaluationDays - flag.silentDays;
+        const remaining = g.noEvaluationDays - flag.silentDays;
         console.log(remaining > 0
           ? `DRAINING: ${flag.key} has been silent ${flag.silentDays.toFixed(1)}d; it clears the evaluation gate in ${remaining.toFixed(1)}d if nothing evaluates it.`
-          : `DRAINED: ${flag.key} has been silent ${flag.silentDays.toFixed(1)}d and has already cleared the evaluation gate; it is held only by ${flag.blockers.join('; ')}. A single stray evaluation restarts the ${ARCHIVE_GATES.noEvaluationDays}-day clock.`);
+          : `DRAINED: ${flag.key} has been silent ${flag.silentDays.toFixed(1)}d and has already cleared the evaluation gate; it is held only by ${flag.blockers.join('; ')}. A single stray evaluation restarts the ${g.noEvaluationDays}-day clock.`);
       }
     } else if (sub === 'index') {
       const campaignFile = 'campaign.json';

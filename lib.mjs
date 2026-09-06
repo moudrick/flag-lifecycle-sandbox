@@ -2105,7 +2105,32 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
 // last of those is expensive to fake, so it is the one the campaign spends real time accumulating.
 // The thresholds live here rather than in scenario data because they are the vendor's, not ours.
 export const ARCHIVE_GATES = { minimumFlagAgeDays: 30, quietTargetingDays: 7, noEvaluationDays: 7 };
-export function archiveReadiness(flag, now = new Date()) {
+// The gates are project configuration, not vendor law: a project owner can change them in the UI at
+// any moment, and this project's were edited on 6 September. Hardcoding them means silently
+// reporting readiness against thresholds that no longer apply, so they are read live and the
+// constants above are only the documented defaults, used when the API cannot be reached.
+export async function fetchLifecycleSettings(fetcher, env, controls = {}) {
+  const settings = settingsFor(env); const t = tokensFor('scenario', env);
+  const response = await (controls.fetcher || fetcher)(`${LD}/api/v2/projects/${settings.project}/lifecycle-settings`, {
+    headers: { authorization: t.LD_DEMO_TOKEN, 'LD-API-Version': 'beta' }
+  });
+  if (!response.ok) throw new Error(`Reading lifecycle settings failed (${response.status}). Archive gates cannot be confirmed.`);
+  const body = await response.json();
+  const number = (value, fallback) => (Number.isFinite(value) ? value : fallback);
+  return {
+    minimumFlagAgeDays: number(body.staleDaysSinceCreation, ARCHIVE_GATES.minimumFlagAgeDays),
+    quietTargetingDays: number(body.launchedDaysAfterModified, ARCHIVE_GATES.quietTargetingDays),
+    noEvaluationDays: number(body.inactiveDaysAfterLastEval, ARCHIVE_GATES.noEvaluationDays),
+    mustBeTemporary: body.checkIsTemporary === true,
+    mustNotBePrerequisite: body.checkIsPrerequisite === true,
+    mustServeOneVariation: body.checkServingSingleVariation === true,
+    mustHaveEvaluationsForRemoval: body.ignoreEvalsForCodeRemoval === false,
+    mustPassAllChecksToArchive: body.requireReadyToArchive === true,
+    lastModified: body._lastModified ? new Date(body._lastModified).toISOString() : null,
+    version: body._version ?? null
+  };
+}
+export function archiveReadiness(flag, now = new Date(), gates = ARCHIVE_GATES) {
   const days = (value) => (value ? (now.getTime() - new Date(value).getTime()) / DAY_MS : null);
   const ageDays = days(flag.createdAt);
   // A flag is only archivable when every critical environment has gone quiet, so the binding
@@ -2113,9 +2138,9 @@ export function archiveReadiness(flag, now = new Date()) {
   const requested = flag.environments.filter((row) => row.critical).map((row) => row.lastRequested).filter(Boolean);
   const silentDays = requested.length ? Math.min(...requested.map((value) => days(value))) : (flag.environments.some((row) => row.critical) ? Infinity : null);
   const blockers = [];
-  if (ageDays === null || ageDays < ARCHIVE_GATES.minimumFlagAgeDays) blockers.push(`age ${ageDays === null ? 'unknown' : ageDays.toFixed(1)}d of ${ARCHIVE_GATES.minimumFlagAgeDays}d`);
+  if (ageDays === null || ageDays < gates.minimumFlagAgeDays) blockers.push(`age ${ageDays === null ? 'unknown' : ageDays.toFixed(1)}d of ${gates.minimumFlagAgeDays}d`);
   if (silentDays === null) blockers.push('no critical environment to measure');
-  else if (silentDays < ARCHIVE_GATES.noEvaluationDays) blockers.push(`evaluated ${silentDays.toFixed(1)}d ago, needs ${ARCHIVE_GATES.noEvaluationDays}d of silence`);
+  else if (silentDays < gates.noEvaluationDays) blockers.push(`evaluated ${silentDays.toFixed(1)}d ago, needs ${gates.noEvaluationDays}d of silence`);
   return { ageDays, silentDays, ready: blockers.length === 0, blockers };
 }
 // One call per environment covers every flag, so this is four requests for the whole catalog.
@@ -2123,6 +2148,9 @@ export async function flagEvaluationStatus(fetcher, env, controls = {}) {
   const settings = settingsFor(env); const t = tokensFor('scenario', env);
   const requestControls = controls.request || {};
   const now = controls.now ? new Date(controls.now) : new Date();
+  let gates = ARCHIVE_GATES; let gatesLive = false;
+  try { gates = await fetchLifecycleSettings(fetcher, env, controls); gatesLive = true; }
+  catch (error) { gates = { ...ARCHIVE_GATES, error: error.message }; }
   const catalog = await ld(fetcher, `/api/v2/flags/${settings.project}?limit=100`, t.LD_DEMO_TOKEN, undefined, requestControls);
   const createdAt = new Map((catalog.items || []).map((item) => [item.key, item.creationDate ? new Date(item.creationDate).toISOString() : null]));
   const byFlag = new Map();
@@ -2138,9 +2166,9 @@ export async function flagEvaluationStatus(fetcher, env, controls = {}) {
   }
   const flags = [...byFlag.entries()].map(([key, environments]) => {
     const flag = { key, createdAt: createdAt.get(key) || null, environments: environments.sort((a, b) => a.environment.localeCompare(b.environment)) };
-    return { ...flag, ...archiveReadiness(flag, now) };
+    return { ...flag, ...archiveReadiness(flag, now, gates) };
   }).sort((a, b) => a.key.localeCompare(b.key));
-  return { checkedAt: now.toISOString(), flags, gates: ARCHIVE_GATES };
+  return { checkedAt: now.toISOString(), flags, gates, gatesLive };
 }
 export async function scenarioStatus(fetcher, env, scenario, controls = {}) {
   const settings = settingsFor(env); const t = tokensFor('scenario', env);
