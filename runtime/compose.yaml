@@ -65,7 +65,7 @@ services:
       DEMO_CLUSTER: prod-eu-west-02
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
   profile-production-sa-east-02:
-    <<: *profile-v004
+    <<: *profile-v005
     environment:
       <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
