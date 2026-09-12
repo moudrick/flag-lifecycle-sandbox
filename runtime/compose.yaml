@@ -41,7 +41,7 @@ services:
       DEMO_ENVIRONMENT: production
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
   profile-production-emea-central-04:
-    <<: *profile-v004
+    <<: *profile-v005
     environment:
       <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
