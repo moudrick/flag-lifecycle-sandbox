@@ -16,14 +16,6 @@ x-orders: &orders
   stop_grace_period: 30s
   logging: *rotated-logs
 
-x-profile-v004: &profile-v004
-  build: ./worktrees/demo-profile-v004
-  image: clean-room-demo/demo-profile:v004
-  init: true
-  restart: unless-stopped
-  stop_grace_period: 30s
-  logging: *rotated-logs
-
 x-profile-v005: &profile-v005
   build: ./worktrees/demo-profile-v005
   image: clean-room-demo/demo-profile:v005
@@ -49,7 +41,7 @@ services:
       DEMO_CLUSTER: prod-emea-central-04
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
   profile-production-eu-west-01:
-    <<: *profile-v004
+    <<: *profile-v005
     environment:
       <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}

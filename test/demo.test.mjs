@@ -1147,11 +1147,14 @@ test('nothing claims an evaluator count from the whole scenario when it means th
   const cli = fs.readFileSync(new URL('../demo.mjs', import.meta.url), 'utf8');
   const offenders = [...cli.matchAll(/^.*compileScenario\(scenario\)\.deployments.*$/gm)].map((match) => match[0].trim());
   assert.deepEqual(offenders, [], 'derive evaluator counts from the applied steps, not from every step on disk');
-  // And the distinction has to be real, or the guard is proving nothing.
-  const planned = compileScenario(scenarioFiles);
+  // And the distinction has to be real, or the guard is proving nothing. The campaign's own plan cannot
+  // carry that proof: once its last step is applied, planned and applied coincide – which is exactly what
+  // broke this assertion on 13 September. A synthetic step dated in the future proves it in any state.
   const running = appliedModel();
+  const future = { schemaVersion: 1, id: 's900', title: 'synthetic plan-ahead step', recommendedDate: '2099-01-01', cadence: 'three-day' };
+  const planned = compileScenario({ ...scenarioFiles, steps: [...scenarioFiles.steps, future] });
   assert.ok(planned.deployments.length >= running.deployments.length);
-  assert.ok(planned.steps.length > running.steps.length, 'the scenario currently plans further ahead than it has applied');
+  assert.ok(planned.steps.length > running.steps.length, 'compiling every step on disk must include steps not yet applied');
 });
 
 test('the budget guard stays engaged on the last day of the metered month', () => {
