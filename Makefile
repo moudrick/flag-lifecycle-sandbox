@@ -16,7 +16,11 @@ RUNTIME_REPOS := demo-orders demo-profile
 EVALUATORS := docker compose --env-file runtime/sdk-keys.env -f runtime/compose.yaml
 PAGES := docker compose -f runtime/compose.pages.yaml
 
-.PHONY: help doctor clone bootstrap pages-up pages-down pages-ps pages-logs evaluators-up evaluators-down evaluators-ps evaluators-logs status handover-in handover-out
+# Hosts the SDKs must reach. Any HTTP status proves the path is open; 401 is the expected answer
+# to an unauthenticated probe and is a pass.
+LD_ENDPOINTS := https://sdk.launchdarkly.com/sdk/latest-all https://stream.launchdarkly.com/all https://events.launchdarkly.com/bulk https://clientsdk.launchdarkly.com
+
+.PHONY: help doctor clone bootstrap pages-up pages-down pages-ps pages-logs evaluators-up evaluators-down evaluators-ps evaluators-logs status verify handover-in handover-out
 
 help:
 	@echo "doctor          what this host can run, and what is missing"
@@ -27,6 +31,7 @@ help:
 	@echo "evaluators-up   start the evaluator stack (one host at a time)"
 	@echo "evaluators-down stop the evaluator stack"
 	@echo "status          what is running here, and the last batch of each evaluator"
+	@echo "verify          is evaluation traffic reaching LaunchDarkly from this host"
 	@echo "handover-in     take over: bootstrap, start, then show what to verify"
 	@echo "handover-out    hand over: stop the evaluator stack only"
 
@@ -95,6 +100,35 @@ status:
 		printf '%s\t' "$$c"; \
 		docker logs --timestamps --tail 200 "$$c" 2>&1 | grep traffic-batch | tail -1 | cut -c1-20 || echo "no batch yet"; \
 	done
+
+# Is anything eating the traffic between this host and LaunchDarkly? Three independent answers:
+# the network path, the SDK's own flush result, and whether evaluations returned real values or
+# the fallbacks a disconnected SDK serves.
+verify:
+	@echo "== network path =="
+	@for url in $(LD_ENDPOINTS); do \
+		code=$$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$$url" || echo 000); \
+		case "$$code" in \
+			000) echo "  BLOCKED $$url (no HTTP response: firewall, proxy or DNS)";; \
+			*) echo "  reachable ($$code) $$url";; \
+		esac; \
+	done
+	@echo "== SDK flush, from the last batch of each evaluator =="
+	@for c in $$(docker ps --format '{{.Names}}' | grep '^runtime-' || true); do \
+		line=$$(docker logs --tail 200 "$$c" 2>&1 | grep traffic-batch | tail -1); \
+		if [ -z "$$line" ]; then echo "  $$c: no batch logged yet"; \
+		elif echo "$$line" | grep -q '"flush":"ok"'; then echo "  $$c: flush ok"; \
+		else echo "  $$c: FLUSH NOT OK, events are not reaching LaunchDarkly"; fi; \
+	done
+	@echo "== real values or fallbacks =="
+	@echo "  a disconnected SDK serves the fallback for every flag, so an all-false batch is the tell"
+	@for c in $$(docker ps --format '{{.Names}}' | grep '^runtime-' || true); do \
+		line=$$(docker logs --tail 200 "$$c" 2>&1 | grep traffic-batch | tail -1); \
+		if echo "$$line" | grep -q '"true":[1-9]'; then echo "  $$c: serving real values"; \
+		elif [ -n "$$line" ]; then echo "  $$c: every evaluation false, check targeting before assuming a block"; fi; \
+	done
+	@echo "== container restarts, a crash loop means flush is failing =="
+	@docker ps --format '{{.Names}}\t{{.Status}}' | grep '^runtime-' || echo "  no evaluators running here"
 
 handover-in: bootstrap evaluators-up pages-up
 	@echo
