@@ -20,6 +20,10 @@ PAGES := docker compose -f runtime/compose.pages.yaml
 # to an unauthenticated probe and is a pass.
 LD_ENDPOINTS := https://sdk.launchdarkly.com/sdk/latest-all https://stream.launchdarkly.com/all https://events.launchdarkly.com/bulk https://clientsdk.launchdarkly.com
 
+# A container carries its own certificate store and its own route to the internet, so it is probed
+# separately from the host. Pinned so a verify run cannot drift.
+PROBE_IMAGE := curlimages/curl:8.11.1
+
 .PHONY: help doctor clone bootstrap pages-up pages-down pages-ps pages-logs evaluators-up evaluators-down evaluators-ps evaluators-logs status verify handover-in handover-out
 
 help:
@@ -83,6 +87,12 @@ evaluators-up:
 	@test -f runtime/sdk-keys.env || { echo "runtime/sdk-keys.env is missing: this host cannot run evaluators"; exit 1; }
 	$(EVALUATORS) up --detach --build
 
+# For a host behind a TLS-inspecting VPN or proxy. See runtime/compose.corp-ca.yaml.
+evaluators-up-corp-ca:
+	@test -n "$(CORP_CA)" || { echo "set CORP_CA to the corporate root certificate in PEM form"; exit 1; }
+	@test -f "$(CORP_CA)" || { echo "CORP_CA file not found: $(CORP_CA)"; exit 1; }
+	CORP_CA="$(CORP_CA)" $(EVALUATORS) -f runtime/compose.corp-ca.yaml up --detach --build
+
 evaluators-down:
 	$(EVALUATORS) down
 
@@ -113,6 +123,16 @@ verify:
 			*) echo "  reachable ($$code) $$url";; \
 		esac; \
 	done
+	@echo "== who issued the certificate, from this host =="
+	@echo "  a corporate issuer means TLS is being intercepted, and a container will not trust it"
+	@for host in sdk.launchdarkly.com events.launchdarkly.com; do \
+		issuer=$$(echo | openssl s_client -connect "$$host:443" -servername "$$host" 2>/dev/null | openssl x509 -noout -issuer 2>/dev/null); \
+		echo "  $$host $${issuer:-no certificate returned}"; \
+	done
+	@echo "== network path from inside a container =="
+	@echo "  the containers do not share this host's VPN routes or its certificate store"
+	@docker run --rm $(PROBE_IMAGE) -s -o /dev/null -m 15 -w '  sdk.launchdarkly.com: %{http_code}\n' https://sdk.launchdarkly.com/sdk/latest-all 2>&1 | tail -1 || echo "  sdk.launchdarkly.com: BLOCKED from containers"
+	@docker run --rm $(PROBE_IMAGE) -sS -o /dev/null -m 15 https://events.launchdarkly.com/bulk 2>&1 | head -2 || true
 	@echo "== SDK flush, from the last batch of each evaluator =="
 	@for c in $$(docker ps --format '{{.Names}}' | grep '^runtime-' || true); do \
 		line=$$(docker logs --tail 200 "$$c" 2>&1 | grep traffic-batch | tail -1); \

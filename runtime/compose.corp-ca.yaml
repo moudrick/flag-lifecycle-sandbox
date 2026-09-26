@@ -1,0 +1,28 @@
+# Overlay for a host behind a TLS-inspecting VPN or proxy.
+#
+# A corporate gateway that inspects TLS presents its own certificate. The host trusts it because
+# the corporate root is in the operating system's store; a container does not, so the SDK fails to
+# connect while every check run on the host passes. `make verify` names the issuer for exactly this
+# reason: a corporate issuer there and a failure inside a container is the signature.
+#
+# Point CORP_CA at the corporate root certificate in PEM form and add this file:
+#
+#   CORP_CA=$HOME/corp-root.pem make evaluators-up-corp-ca
+#
+# Node reads NODE_EXTRA_CA_CERTS in addition to its built-in bundle, so public certificates keep
+# working. The certificate is mounted read-only and is not a secret.
+x-corp-ca: &corp-ca
+  volumes:
+    - ${CORP_CA:?set CORP_CA to the corporate root certificate in PEM form}:/etc/ssl/corp-root.pem:ro
+  environment:
+    NODE_EXTRA_CA_CERTS: /etc/ssl/corp-root.pem
+
+services:
+  orders-production: *corp-ca
+  orders-staging: *corp-ca
+  profile-staging: *corp-ca
+  profile-production-emea-central-04: *corp-ca
+  profile-production-eu-west-01: *corp-ca
+  profile-production-eu-west-02: *corp-ca
+  profile-production-sa-east-02: *corp-ca
+  profile-production-us-east-02: *corp-ca
