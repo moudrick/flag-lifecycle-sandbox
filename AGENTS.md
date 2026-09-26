@@ -66,6 +66,29 @@ every identifier outside that scope.
 - Preserve clear fail-closed behavior: incomplete or failed evidence cannot become a stale or dead
   candidate, and candidates never authorize deletion.
 
+## Operating a live campaign, on any host
+
+A clone may be a working copy or a running runtime host, and a fresh agent cannot tell which. While
+`CAMPAIGN_LOCK=true` in `.env`, treat the project as carrying irreplaceable evidence: flag age,
+evaluations, contexts, repository history, and search indexing that took weeks to accumulate.
+
+- **Never run `recreate`, `refresh`, or `destroy`.** `recreate` deletes the project and the
+  repositories; `refresh` deletes and recreates the repositories, which restarts code-search
+  indexing. When `scenario compose` asks for either because clones are missing, the answer is
+  `make clone`, which mutates nothing remote.
+- **Exactly one host runs the evaluator stack.** Two hosts double evaluations and connection
+  minutes, and connection cost is not linear in container count. Hand over by starting the new host,
+  confirming its batches, then stopping the old one. Page keepers are exempt: their context key is
+  fixed, so any number cost one monthly active context.
+- **Downtime is survivable, silence is not free.** There is no backfill, and a flag silent past the
+  project's archive gate changes its lifecycle state. Check `scenario evaluations` before assuming a
+  gap was harmless.
+- **A page keeper takes an explicit flag and never a failover flag.** A page opened without one
+  reads the pair compiled into its source, and on a failed connection it evaluates the failover
+  flag. A flag whose value to the demo is that it has never been evaluated cannot be restored.
+- `make doctor` reports what a host is missing; `make verify` reports whether evaluation traffic
+  reaches LaunchDarkly from it.
+
 ## Verification
 
 After local changes, run at minimum:
