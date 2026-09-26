@@ -52,11 +52,21 @@ Keepers are safe to run on several hosts at once. The evaluator stack is not.
 The runtime is host-independent. Evaluation history lives in the LaunchDarkly project, so moving hosts keeps it. What a fresh clone needs:
 
 1. Docker, and Node.js only for the bootstrap step.
-2. Ignored `runtime/sdk-keys.env` with `DEMO_GENERATION_ID`, `LD_EVALUATION_SDK_KEY_PRODUCTION`, `LD_EVALUATION_SDK_KEY_STAGING`, `LD_EVALUATION_SDK_KEY_TEST`, `LD_EVALUATION_SDK_KEY_DEV`. Copy it from the host that has it; never commit it.
-3. `make bootstrap`, which checks out the pinned release trees into ignored `worktrees/` and `repos/`. It reads public repositories and needs no token.
-4. `make evaluators-up`.
+2. Ignored `.env` with the two non-secret settings `GH_ORG` and `LD_PROJECT_KEY`.
+3. Ignored `runtime/sdk-keys.env` with `DEMO_GENERATION_ID`, `LD_EVALUATION_SDK_KEY_PRODUCTION`, `LD_EVALUATION_SDK_KEY_STAGING`, `LD_EVALUATION_SDK_KEY_TEST`, `LD_EVALUATION_SDK_KEY_DEV`. Copy it from the host that has it; never commit it. The generation id is part of every context key, so copy the file rather than generating a new one.
+4. `make bootstrap`, which shallow-clones the service repositories over token-free HTTPS and checks out the pinned release trees into ignored `repos/` and `worktrees/`.
+5. `make evaluators-up`.
 
 `make doctor` reports what a host is missing before anything starts.
+
+### "Run recreate or refresh first"
+
+A fresh clone has no `runtime/repos/`, and `scenario compose` says so with a message naming `recreate` or `refresh`. **During a campaign, neither is the right answer:**
+
+- `recreate` deletes the LaunchDarkly project and the owned repositories: flag age, evaluations, contexts and repository history all go.
+- `refresh` keeps the project but deletes and recreates the repositories, which destroys their history and restarts code-search indexing.
+
+Both refuse while `CAMPAIGN_LOCK=true`, and that lock exists for this reason. What a fresh host actually lacks is the clones, which `make clone` provides without a token and without touching anything remote.
 
 ### Handover, without a gap
 

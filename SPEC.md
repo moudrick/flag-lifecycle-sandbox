@@ -110,7 +110,7 @@ Project deletion is the demo's project-scoped reset boundary. Deleting individua
 
 ## Portable runtime and page keepers
 
-The runtime is host-independent. Any machine with Docker and this clone runs it: the operator writes ignored `runtime/sdk-keys.env`, runs `scenario compose --to <applied step>` to check out the pinned release trees into ignored `runtime/worktrees/` and `runtime/repos/`, then starts tracked `runtime/compose.yaml`. Evaluation history lives in the LaunchDarkly project, not on the host, so moving hosts preserves it and there is still no backfill for the time a host is down.
+The runtime is host-independent. Any machine with Docker and this clone runs it: the operator writes ignored `.env` and `runtime/sdk-keys.env`, shallow-clones the built services over token-free HTTPS into ignored `runtime/repos/`, runs `scenario compose --to <applied step>` to check out the pinned release trees into ignored `runtime/worktrees/`, then starts tracked `runtime/compose.yaml`. A host missing those clones is told to run recreate or refresh, which during a campaign would destroy the evidence the lock protects; `make clone` is the correct answer and mutates nothing remote. Evaluation history lives in the LaunchDarkly project, not on the host, so moving hosts preserves it and there is still no backfill for the time a host is down.
 
 Exactly one host runs the evaluator stack at a time. Two hosts running the same services double both evaluations and service-connection minutes, and connection cost is non-linear, so the budget tier is a property of the project rather than of a host. A handover starts the new host, confirms its batches, and only then stops the old one; a short overlap is preferred to a gap.
 
