@@ -1,0 +1,42 @@
+# Page keepers. Independent of the evaluator stack in compose.yaml and of every SDK key.
+#
+# Each keeper holds the published archive-writer page open for one flag, so that flag keeps
+# accruing evaluations while this host is awake. The page uses the public client-side ID and one
+# fixed context, so a keeper costs one monthly active context and no service connection.
+#
+# Unlike the evaluator stack, keepers may run on more than one host at once: the context key is
+# fixed, so the monthly active count does not grow. Prefer one host anyway, so the chart reads as
+# one continuous line.
+name: flag-runtime-pages
+
+x-keeper: &keeper
+  build: ./pages
+  image: clean-room-demo/page-keeper:local
+  init: true
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  stop_grace_period: 10s
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+  healthcheck:
+    test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:9222/json/version"]
+    interval: 60s
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+
+services:
+  page-stage:
+    <<: *keeper
+    environment:
+      PAGE_URL: ${PAGE_BASE_URL:-https://featureflag-extensiveconsumer-demo-org.github.io/demo-archive-writer/}?flag=${PAGE_STAGE_FLAG:-demo-order-archive-object-storage}
+
+  page-reserve:
+    <<: *keeper
+    environment:
+      PAGE_URL: ${PAGE_BASE_URL:-https://featureflag-extensiveconsumer-demo-org.github.io/demo-archive-writer/}?flag=${PAGE_RESERVE_FLAG:-demo-invoice-archive-object-storage}

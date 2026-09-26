@@ -1180,3 +1180,22 @@ test('the budget guard stays engaged on the last day of the metered month', () =
   assert.ok(midMonth.remainingDays > 0);
   assert.equal(midMonth.affordableContainers, 16);
 });
+
+// A page keeper exists to keep one flag busy. The same page, opened without an explicit flag, reads
+// the pair compiled into its source, and a failed connection then evaluates the failover flag. These
+// tests pin the guards that keep a keeper away from that path.
+test('page keeper compose names only explicit flags and never a failover flag', () => {
+  const compose = fs.readFileSync(new URL('../runtime/compose.pages.yaml', import.meta.url), 'utf8');
+  assert.match(compose, /\?flag=\$\{PAGE_STAGE_FLAG/, 'the stage keeper must pass an explicit flag parameter');
+  assert.match(compose, /\?flag=\$\{PAGE_RESERVE_FLAG/, 'the reserve keeper must pass an explicit flag parameter');
+  assert.ok(!/failover/i.test(compose), 'no failover flag may appear in the keeper stack');
+  assert.ok(!/LD_EVALUATION_SDK_KEY|sdk-keys\.env/.test(compose), 'a keeper never receives an SDK key');
+});
+
+test('page keeper entrypoint refuses every URL that could wake a failover flag', () => {
+  const script = fs.readFileSync(new URL('../runtime/pages/keep-open.sh', import.meta.url), 'utf8');
+  for (const guard of ['*failover*', "*'?flag='*", 'http://*|https://*']) {
+    assert.ok(script.includes(guard), `the keeper must guard ${guard}`);
+  }
+  assert.match(script, /exit 64/, 'a refused URL exits non-zero rather than opening the page');
+});

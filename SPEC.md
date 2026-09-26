@@ -108,6 +108,16 @@ Normal SDK traffic uses summary events, not one outbound event per variation. De
 
 Project deletion is the demo's project-scoped reset boundary. Deleting individual context records does not reduce already accumulated usage. Account-wide permanent deletion is outside these credentials and may require LaunchDarkly Support or account deletion.
 
+## Portable runtime and page keepers
+
+The runtime is host-independent. Any machine with Docker and this clone runs it: the operator writes ignored `runtime/sdk-keys.env`, runs `scenario compose --to <applied step>` to check out the pinned release trees into ignored `runtime/worktrees/` and `runtime/repos/`, then starts tracked `runtime/compose.yaml`. Evaluation history lives in the LaunchDarkly project, not on the host, so moving hosts preserves it and there is still no backfill for the time a host is down.
+
+Exactly one host runs the evaluator stack at a time. Two hosts running the same services double both evaluations and service-connection minutes, and connection cost is non-linear, so the budget tier is a property of the project rather than of a host. A handover starts the new host, confirms its batches, and only then stops the old one; a short overlap is preferred to a gap.
+
+Tracked `runtime/compose.pages.yaml` defines page keepers: headless browser containers that hold a published client-side page open so one chosen flag keeps accruing evaluations. A page keeper receives a public URL and nothing else. It holds no SDK key and opens no service connection, and one fixed context makes it a single monthly active context. A page keeper refuses any URL without an explicit `?flag=`, any URL carrying `?failover=`, and any URL naming a failover flag, so it cannot spend a flag whose value to the demo is that it has never been evaluated.
+
+Tracked `Makefile` wraps both stacks with `pages-up`, `evaluators-up`, `status`, and their stops. A host without make uses the documented Compose commands instead.
+
 ## Verification and CI
 
 Local verification is `node --check demo.mjs`, `node --check lib.mjs`, and `npm test`. CI uses `actions/checkout@v7`, `actions/setup-node@v7`, and Node.js 24 on pushes to `main`, with read-only contents and no secrets or external requests.
